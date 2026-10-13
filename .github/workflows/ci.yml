@@ -25,7 +25,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: 'npm'
 
       # ──────────────────────────────────────────────
       # 2. JS 语法检查（前端零编译期检查，最易炸）
