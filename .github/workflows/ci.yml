@@ -1,0 +1,177 @@
+name: CI — 轻量门禁
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    name: 语法/白名单/结构
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # ──────────────────────────────────────────────
+      # 0. Checkout
+      # ──────────────────────────────────────────────
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # 方便扫历史，虽然主分支只有发布节点
+
+      # ──────────────────────────────────────────────
+      # 1. Node（用于 JS 语法检查）
+      # ──────────────────────────────────────────────
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      # ──────────────────────────────────────────────
+      # 2. JS 语法检查（前端零编译期检查，最易炸）
+      #    node --check 所有 bridge.js / modules/*.js
+      #    以及 index.html 里的 <script> 块（单独抽出检查）
+      # ──────────────────────────────────────────────
+      - name: JS 语法检查
+        run: |
+          set -euo pipefail
+          cd WebUI/prototype
+          echo "检查 bridge.js..."
+          node --check bridge.js
+          echo "检查 modules/*.js..."
+          for f in modules/*.js; do
+            node --check "$f" || { echo "FAIL: $f"; exit 1; }
+          done
+          echo "✅ 所有 JS 语法通过"
+
+      # ──────────────────────────────────────────────
+      # 3. HTML 内联脚本语法检查（index.html 里的 <script>）
+      #    这里简单抽取并用 node --check
+      # ──────────────────────────────────────────────
+      - name: HTML 内联脚本语法
+        run: |
+          set -euo pipefail
+          cd WebUI/prototype
+          # 提取 <script>...</script> 里的内容（不含 src= 的外链）
+          # 这里只做简单提取：拿第一个完整 script 块
+          # 更完整的可用 python 脚本，但通常 index.html 只有一个内联 script
+          python3 - <<'PY'
+import re, sys, tempfile, subprocess, os
+html = open('index.html','r',encoding='utf-8').read()
+# 找所有不带 src= 的 <script>...</script>
+blocks = re.findall(r'<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>', html, flags=re.DOTALL|re.IGNORECASE)
+if not blocks:
+    print("无内联 script，跳过")
+    sys.exit(0)
+for i, block in enumerate(blocks):
+    # 去掉可能的 type=module 等
+    block = block.strip()
+    if not block:
+        continue
+    # 写临时文件跑 node --check
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.js', delete=False, encoding='utf-8') as f:
+        f.write(block)
+        tmp = f.name
+    try:
+        r = subprocess.run(['node','--check',tmp], capture_output=True, text=True)
+        if r.returncode != 0:
+            print(f"FAIL: index.html 内联 script #{i+1}")
+            print(r.stderr)
+            sys.exit(1)
+    finally:
+        os.unlink(tmp)
+print(f"✅ index.html {len(blocks)} 个内联 script 语法通过")
+PY
+
+      # ──────────────────────────────────────────────
+      # 4. 白名单守卫（AGENTS.md 铁律：防公章/印章/交付版本/备份/.exe 入库）
+      #    扫描暂存区+已跟踪文件（PR 时扫 diff，push 时扫 HEAD）
+      # ──────────────────────────────────────────────
+      - name: 白名单守卫
+        run: |
+          set -euo pipefail
+          # 黑名单模式（正则，忽略大小写）
+          BLACKLIST=(
+            '公章|印章|seal'
+            '交付版本'
+            '备份文件夹|备份[^a-zA-Z]'
+            'E2E[\\/]'
+            'PDFQFZ\.Tests[\\/]'
+            '工具脚本[\\/]'
+            '输出记录.*\.md$'
+            'Web交付版本[\\/]'
+            '\.exe$'
+            'WebShell/Assets/公章\.png$'
+            'app_icon_raw\.png$'
+            '运行组件[\\/]'
+            '\.pdb$'
+            'obj[\\/]'
+            'bin[\\/]'
+            'packages[\\/]'
+            '\.user$'
+            '\.suo$'
+            '_ReSharper'
+            '\.vs[\\/]'
+          )
+          # 组装 egrep pattern
+          PAT=$(IFS='|'; echo "${BLACKLIST[*]}")
+          echo "扫描模式: $PAT"
+          # 取扫描集合：PR 用 diff（base->HEAD），push 用 HEAD 全量
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            # 获取 base sha
+            BASE="${{ github.event.pull_request.base.sha }}"
+            FILES=$(git diff --name-only "$BASE"..HEAD 2>/dev/null || git diff --name-only "$BASE" 2>/dev/null || echo "")
+          else
+            FILES=$(git ls-files)
+          fi
+          if [[ -z "$FILES" ]]; then
+            echo "无文件变动，跳过"
+            exit 0
+          fi
+          # 逐文件检查
+          VIOL=0
+          for f in $FILES; do
+            if [[ -f "$f" ]]; then
+              # .gitignore 已忽略的文件 git ls-files 不会出现，但 diff 可能出现已删除文件
+              if echo "$f" | grep -qiE "$PAT"; then
+                echo "🚫 违规文件: $f"
+                VIOL=1
+              fi
+            fi
+          done
+          if [[ $VIOL -eq 1 ]]; then
+            echo "❌ 白名单守卫失败：发现禁止入库文件"
+            echo "请参考 AGENTS.md 第 5-11 行白名单/黑名单规则"
+            exit 1
+          fi
+          echo "✅ 白名单守卫通过"
+
+      # ──────────────────────────────────────────────
+      # 5. 结构完整性：桥方法两端对齐
+      #    检查 CSharpBridge.*.cs 里 public string 方法，前端至少有同名调用或文件存在
+      # ──────────────────────────────────────────────
+      - name: 桥方法两端对齐
+        run: |
+          set -euo pipefail
+          echo "收集 C# 桥公开方法..."
+          # 找 CSharpBridge.*.cs 里的 public string Xxx( 方法名
+          CS_METHODS=$(grep -rhoE 'public string [A-Za-z]+\s*\(' WebShell/Services/CSharpBridge.*.cs 2>/dev/null | \
+            sed -E 's/.*public string ([A-Za-z]+)\s*\(.*/\1/' | sort -u)
+          echo "C# 方法: $(echo $CS_METHODS | wc -w) 个"
+          echo "$CS_METHODS"
+          # 前端所有 .js / .html 文件
+          FRONT_FILES=$(find WebUI/prototype -type f \( -name '*.js' -o -name '*.html' \))
+          MISS=0
+          for m in $CS_METHODS; do
+            # 以方法名全词搜前端（区分大小写）
+            if ! grep -rqE "\\b$m\\b" $FRONT_FILES 2>/dev/null; then
+              echo "⚠️  前端未见调用: $m"
+              MISS=1
+            fi
+          done
+          if [[ $MISS -eq 1 ]]; then
+            echo "❌ 存在前端未调用的桥方法（可能是新增忘记接前端，或已废弃）"
+            echo "若是新功能，请在 stampActions.js / configPersist.js 等对应模块接入"
+            exit 1
+          fi
+          echo "✅ 桥方法两端对齐通过"
