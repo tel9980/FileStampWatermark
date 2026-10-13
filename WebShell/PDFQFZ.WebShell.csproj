@@ -35,6 +35,17 @@
     <WarningLevel>4</WarningLevel>
     <Prefer32Bit>false</Prefer32Bit>
   </PropertyGroup>
+  <!-- 赞助版（发布用）：TRACE;VIP_PAID，开启主题色+徽章+自定义标题 -->
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'ReleaseVIP|AnyCPU' ">
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <DebugType>pdbonly</DebugType>
+    <Optimize>true</Optimize>
+    <OutputPath>bin\ReleaseVIP\</OutputPath>
+    <DefineConstants>TRACE;VIP_PAID</DefineConstants>
+    <ErrorReport>prompt</ErrorReport>
+    <WarningLevel>4</WarningLevel>
+    <Prefer32Bit>false</Prefer32Bit>
+  </PropertyGroup>
   <ItemGroup>
     <Reference Include="PresentationCore" />
     <Reference Include="PresentationFramework" />
