@@ -182,6 +182,12 @@ namespace PDFQFZ.WebShell.Services
                     ["textureRadial"] = p.TextureRadial,
                     ["textureCast"] = p.TextureCast,
                     ["texturePresetIndex"] = p.TexturePresetIndex,
+                    // V1.1.1.0：盖章叠字
+                    ["textOverlayEnabled"] = p.TextOverlayEnabled,
+                    ["textOverlayText"] = p.TextOverlayText ?? "",
+                    ["textOverlayPos"] = p.TextOverlayPos,
+                    ["textOverlayColorArgb"] = p.TextOverlayColorArgb,
+                    ["textOverlaySize"] = p.TextOverlaySize,
                 };
                 return Json(d);
             }
@@ -222,6 +228,12 @@ namespace PDFQFZ.WebShell.Services
                 p.TextureRadial = GetInt(d, "textureRadial", p.TextureRadial);
                 p.TextureCast = GetInt(d, "textureCast", p.TextureCast);
                 p.TexturePresetIndex = GetInt(d, "texturePresetIndex", p.TexturePresetIndex);
+                // V1.1.1.0：盖章叠字（未传的键保持原值，前端全量传）
+                p.TextOverlayEnabled = GetBool(d, "textOverlayEnabled", p.TextOverlayEnabled);
+                p.TextOverlayText = GetStr(d, "textOverlayText", p.TextOverlayText);
+                p.TextOverlayPos = GetInt(d, "textOverlayPos", p.TextOverlayPos);
+                p.TextOverlayColorArgb = GetInt(d, "textOverlayColorArgb", p.TextOverlayColorArgb);
+                p.TextOverlaySize = Math.Max(10, Math.Min(100, GetInt(d, "textOverlaySize", p.TextOverlaySize)));
                 AppConfig.SaveStampParams(stampName.Trim(), p);
                 return "ok";
             }

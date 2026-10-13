@@ -734,6 +734,36 @@ button,input,select,textarea{font-family:inherit}
                 <div class="disp-cell"><label>旋转</label><el-input-number class="tbl-input" v-model="rotation" :min="-360" :max="360" controls-position="right" style="width:88px" @change="sealParamNoSealTip"></el-input-number><span class="unit">°</span></div>
               </div>
               </div>
+              <!-- V1.1.1.0：盖章叠字（章上叠一行文字——公章为透明 PNG，文字会浮在章图案之上；与「文字水印」是两套独立功能） -->
+              <div class="sect-block" id="navsect-stamp-textov">
+              <div class="sect-title" v-show="navSectOn('stamp','textov')" @click="toggleSect('stampSect','textov')"><rei-arrow class="sect-arrow" :deg="stampSect.textov?180:0"></rei-arrow>盖章叠字</div>
+              <div v-show="navSectOn('stamp','textov') && stampSect.textov" class="row">
+                <el-tooltip content="开启后：每次手动盖章，都会在章上顺带叠一行文字（如经办人、日期）。公章需为透明背景 PNG，文字才能清晰浮在章图案上" placement="top">
+                  <el-checkbox v-model="textOvEnabled" @change="onTextOvEnable">盖章时叠一行文字</el-checkbox>
+                </el-tooltip>
+              </div>
+              <div v-show="navSectOn('stamp','textov') && stampSect.textov && textOvEnabled" class="row" style="flex-wrap:wrap;gap:8px 0">
+                <div class="disp-cell"><label>文字</label><el-input v-model="textOvText" placeholder="如：经办人 张三" style="width:150px" maxlength="50" @input="saveTextOvParams"></el-input></div>
+                <div class="disp-cell"><label>位置</label>
+                  <el-select v-model="textOvPos" style="width:88px" @change="saveTextOvParams">
+                    <el-tooltip content="文字压在章图案正中间" placement="top"><el-option label="章中心" value="0"></el-option></el-tooltip>
+                    <el-tooltip content="文字在章的上边缘附近" placement="top"><el-option label="章上方" value="1"></el-option></el-tooltip>
+                    <el-tooltip content="文字在章的下边缘附近" placement="top"><el-option label="章下方" value="2"></el-option></el-tooltip>
+                  </el-select>
+                </div>
+                <div class="disp-cell"><label>字号</label><el-input-number class="tbl-input" v-model="textOvSize" :min="10" :max="100" controls-position="right" style="width:88px" @change="saveTextOvParams"></el-input-number><span class="unit">%</span></div>
+                <div class="disp-cell"><label>颜色</label>
+                  <el-select v-model="textOvColor" style="width:88px" @change="saveTextOvParams">
+                    <el-option v-for="c in wmQuickColors" :key="c.v" :value="c.v" :label="c.n">
+                      <span class="wm-opt-color"><span class="wm-opt-dot" :style="{background:c.v}"></span>{{ c.n }}</span>
+                    </el-option>
+                  </el-select>
+                </div>
+              </div>
+              <div v-show="navSectOn('stamp','textov') && stampSect.textov && textOvEnabled" class="row">
+                <span style="font-size:12px;color:var(--text-3);line-height:1.5">叠字只对「手动点击盖章」生效；按文字盖章、范围批量盖章不加。叠出来的字可在「文字水印」页里继续改。</span>
+              </div>
+              </div>
               <!-- v2.4.0.40：随机角度位移/盖章渲染 已移至左栏顶部（开关+按钮弹窗），原参数区块随迁，此处移除 -->
               <!-- 分区2 骑缝章（二级标题，可折叠） -->
               <div class="sect-block" id="navsect-stamp-ridge">
@@ -1464,7 +1494,7 @@ const app = createApp({
       navState:{file:{on:true,subs:null}, stamp:{on:true,subs:{param:true,ridge:true,white:false}}, batch:{on:true,subs:{range:true,text:false,folder:false}}, watermark:{on:false,subs:null}, output:{on:true,subs:{mode:true,dpi:true,name:true}}},
       navGroups:[
         {key:'file', short:'源', title:'源文件', subs:null},
-        {key:'stamp', short:'印', title:'印章参数', subs:[{key:'param',text:'参数',title:'显示参数'},{key:'ridge',text:'骑缝',title:'骑缝章'},{key:'white',text:'去白',title:'图章去白',sw:'removeWhite'}]},
+        {key:'stamp', short:'印', title:'印章参数', subs:[{key:'param',text:'参数',title:'显示参数'},{key:'ridge',text:'骑缝',title:'骑缝章'},{key:'white',text:'去白',title:'图章去白',sw:'removeWhite'},{key:'textov',text:'叠字',title:'盖章叠字'}]},
         {key:'batch', short:'批', title:'批量盖章', subs:[{key:'range',text:'范围',title:'指定范围页'},{key:'text',text:'文字',title:'按文字批量',sw:'textForce'},{key:'folder',text:'批量',title:'批处理文件',sw:'batchForce'}]},
         {key:'watermark', short:'文', title:'文字水印', subs:null, sw:'wmEditMode'}, /* V1.0.0.55：卡体显示=编辑中（退出水印模式即整卡消失）；图片模式特判 true 在前 */
         {key:'output', short:'出', title:'输出设置', subs:[{key:'mode',text:'模式',title:'输出模式'},{key:'dpi',text:'dpi',title:'输出 DPI'},{key:'name',text:'命名',title:'输出文件名后缀'}]},
@@ -1481,7 +1511,7 @@ const app = createApp({
       wmBoxesImg:[], dlgImgMixed:false, imgMixedInfo:null,
       wmWrapResult:{},  /* V297: C# 算的换行结果（key=b.id，value=换行后文本） */
       /* 印章参数卡二级分区折叠状态（显示参数/骑缝章/图章去白；v2.4.0.40：随机角度/盖章渲染已迁顶部弹窗，不再折叠） */
-      stampSect:{disp:true, ridge:true, white:true},
+      stampSect:{disp:true, ridge:true, white:true, textov:true},
       batchSect:{range:true, text:false, folder:false},
       /* V2.4.0.53 文件夹批量处理（简化版 V1）状态 */
       batchRange:'0', batchStart:1, batchEnd:8, batchX:50, batchY:80, batchForce:false, textForce:false,
@@ -1491,6 +1521,8 @@ const app = createApp({
       /* V1.0.0.57：模式提示条可拖位置（相对预览区左上角 px；null=默认右上角锚定）+ 印章显示参数无章一次性提示标志 */
       bannerPos:null, _sealParamWarned:false,
       sealSize:44, rotation:0, opacity:100,
+      /* V1.1.1.0：盖章叠字（章上叠一行文字，随章记忆存 config.ini；开关关时完全不影响原有盖章） */
+      textOvEnabled:false, textOvText:'', textOvPos:'0', textOvColor:'#C00000', textOvSize:30,
       sealPos:'右', posVal:'50%', segCount:20, seamType:'1',
       /* v2.4.0.52：骑缝章预览——全量切片布局 + 基准章图（GetSeamPreview） */
       seamAll:[], seamBase:{url:'',w:0,h:0}, _seamTimer:null, _seamSeq:0,

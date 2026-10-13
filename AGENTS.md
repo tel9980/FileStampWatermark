@@ -23,6 +23,19 @@
 - EXE 文件名不带"免费版"字样（发布用名）；赞助版加 `_赞助版` 后缀。
 - 用户手动修改过的文件作为后续修订母版，不得回退。
 
+### 版本记录
+
+- **1.1.1.0**（2026-10-13）：新增「盖章叠字」——手动盖章时顺带在章上叠一行文字。
+  - 实现要点：文字复用既有「文字水印框」渲染管线（`StampEngine` 先画章后画水印），**未改渲染代码**；
+    新增桥方法 `CSharpBridge.Stamping.AddManualStampWithText(float,float,int)` + 页尺寸辅助 `TryGetPagePt`。
+  - 参数随章记忆存 `config.ini` 的 `[stamp_章名]` 节：`textOverlayEnabled/Text/Pos/ColorArgb/Size` 五键。
+  - 前端入口：印章参数卡「叠字」分区（`navSectOn('stamp','textov')`，需在 `navGroups` 与 `stampSect` 双侧注册）。
+  - 兼容性：① 老壳无新桥方法时前端探测 `window.CSharpBridge.AddManualStampWithText` 自动降级普通盖章
+    （为此 `bridge.js` 需暴露 `window.CSharpBridge`，此前该宿主对象只是闭包局部变量，前端无法探测）；
+    ② 叠字包独立 try/catch，失败只回传 `textOverlay.error`，不影响盖章结果；
+    ③ 叠字成功后必须额外调 `refreshPageWatermarks()`——`refreshPageStamps()` 只刷章不刷水印，否则预览看不到刚叠的字。
+  - 仅手动盖章生效（按文字/范围批量不加）。
+
 ## 四、线上历史与本地调试历史分离（2026-10-08 确立）
 
 - 线上 main 只保留发布 commit：每个发布一个 commit（`发布 1.0.0`、`发布 1.1.0`…），并打对应 tag（v1.0.0、v1.1.0…）。线上 commit 历史必须保持"只有发布节点"的干净结构，**禁止把调试 commit 推上线上**。

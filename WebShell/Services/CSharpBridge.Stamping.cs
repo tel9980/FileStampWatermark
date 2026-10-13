@@ -66,6 +66,136 @@ namespace PDFQFZ.WebShell.Services
             }
             catch (Exception ex) { return "{\"ok\":false,\"error\":" + Json(ex.Message) + "}"; }
         }
+        /// <summary>V1.1.1.0：取指定页真实尺寸（pt，page 从 1 起）。优先复用页渲染缓存里的 ptW/ptH（零成本）；
+        /// 未命中时按 72dpi 渲染一页取 px×72/dpi（px 即 pt）。失败回落 A4 595×842（叠字尺寸仅轻微偏差，不阻断盖章）。</summary>
+        private void TryGetPagePt(int page, out float ptW, out float ptH)
+        {
+            ptW = 595f; ptH = 842f;
+            try
+            {
+                int idx = page - 1;
+                if (idx < 0) return;
+                string cached;
+                lock (_renderPageCacheLock)
+                {
+                    _renderPageCache.TryGetValue((_stampDocPath ?? "") + "|" + idx, out cached);
+                }
+                if (!string.IsNullOrEmpty(cached))
+                {
+                    var d = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(cached);
+                    if (d != null && d.TryGetValue("ptW", out object w) && d.TryGetValue("ptH", out object h)
+                        && double.TryParse(Convert.ToString(w), out double dw) && double.TryParse(Convert.ToString(h), out double dh)
+                        && dw > 1 && dh > 1)
+                    {
+                        ptW = (float)dw; ptH = (float)dh; return;
+                    }
+                }
+                PDFQFZ.Library.IPdfDocumentRenderer r;
+                lock (renderSync) { r = _renderer; }
+                if (r != null)
+                {
+                    using (var bmp = r.RenderPage(idx, 72))
+                    {
+                        if (bmp != null && bmp.Width > 1 && bmp.Height > 1)
+                        {
+                            ptW = bmp.Width * 72f / 72f; ptH = bmp.Height * 72f / 72f;
+                        }
+                    }
+                }
+            }
+            catch { /* 回落 A4 */ }
+        }
+        /// <summary>V1.1.1.0：盖章并顺带在章上叠一行文字（"章上叠字"，仅手动盖章）。
+        /// 文字以「文字水印框」实现——复用既有水印渲染管线，章先画、水印后画，文字天然压在透明 PNG 公章之上。
+        /// 参数从当前章记忆读取（AppConfig.LoadStampParams），未开启或文字为空时等价 AddManualStamp（零回归）。
+        /// 返回 AddManualStamp 的全部字段 + textOverlay:{ok,id}（叠字失败不影响章，只提示）。</summary>
+        public string AddManualStampWithText(float xRatio, float yRatio, int page)
+        {
+            try
+            {
+                if (_renderer == null) return "{\"ok\":false,\"error\":\"未打开 PDF\"}";
+                string stampPath = CurrentStampPath();
+                if (string.IsNullOrWhiteSpace(stampPath) || !File.Exists(stampPath))
+                    return "{\"ok\":false,\"error\":\"请先选择印章\"}";
+
+                var sp = AppConfig.LoadStampParams(CurrentStampName() ?? "");
+                bool wantOverlay = sp.TextOverlayEnabled && !string.IsNullOrWhiteSpace(sp.TextOverlayText);
+                if (!wantOverlay) return AddManualStamp(xRatio, yRatio, page);
+
+                // 1) 先盖章（与 AddManualStamp 完全同路：AddPlacement 已含随机位移/旋转/纹理）
+                var placement = AddPlacement(
+                    Math.Max(0f, Math.Min(1f, xRatio)), Math.Max(0f, Math.Min(1f, yRatio)), page, 0, "manual");
+                var result = RenderStampToCache(placement);
+
+                // 2) 叠字：在章位置建一个文字水印框（W/H 按章尺寸估算，字号按 FsToS 短边比例，与前端预览一致）
+                try
+                {
+                    string docPath = _watermarkDocPath();
+                    bool batchMode = _isImgBatch() || _isPdfBatch();
+                    if (batchMode || !string.IsNullOrWhiteSpace(docPath))
+                    {
+                        // 章显示尺寸（pt）→ 框宽高比例（章按方形估算：实际章图非方形时文字框略宽于章，视觉仍居中对齐）
+                        float sizePt = sp.Size * 72f / 25.4f;
+                        int pos = sp.TextOverlayPos < 0 ? 0 : (sp.TextOverlayPos > 2 ? 2 : sp.TextOverlayPos);
+                        int sizePct = sp.TextOverlaySize < 10 ? 10 : (sp.TextOverlaySize > 100 ? 100 : sp.TextOverlaySize);
+                        TryGetPagePt(page, out float pagePtW, out float pagePtH);
+                        // 框宽 = 章宽的 1.1 倍（留字宽余量），框高 = 章高 × sizePct%（文字行高）
+                        float boxW = sizePt * 1.1f;
+                        float boxH = Math.Max(4f, sizePt * sizePct / 100f);
+                        // 位置：0=章中心 / 1=章上方 2=章下方（框中心与章中心在对应处对齐）
+                        float dy = pos == 1 ? -(sizePt / 2f + boxH * 0.5f)
+                                : pos == 2 ? (sizePt / 2f + boxH * 0.5f)
+                                : 0f;
+                        float cx = placement.X, cy = Math.Max(0f, Math.Min(1f, placement.Y + dy / pagePtH));
+                        // 左上角比例坐标（框不得出界：右/下溢出时向左/上收，保证文字完整可读）
+                        float bx = Math.Max(0f, Math.Min(1f - boxW / pagePtW, cx - boxW / 2f / pagePtW));
+                        float by = Math.Max(0f, Math.Min(1f - boxH / pagePtH, cy - boxH / 2f / pagePtH));
+
+                        // 字号：FsToS = 框高 × fontScale ÷ 页短边（与前端 wmCalcFontSize 同源），保证横竖页字号一致
+                        float fontScale = 0.8f;
+                        float fsToS = boxH * fontScale / Math.Min(pagePtW, pagePtH);
+
+                        var box = new PDFQFZ.Library.WatermarkBox
+                        {
+                            DocumentPath = docPath,
+                            Page = page,
+                            X = bx, Y = by,
+                            W = boxW / pagePtW, H = boxH / pagePtH,
+                            Rotation = 0f,
+                            Text = sp.TextOverlayText,
+                            FontName = "微软雅黑",
+                            ColorArgb = sp.TextOverlayColorArgb,
+                            Opacity = 100,           // 章上文字必须实，不能被章图案透出
+                            Bold = false, Italic = false, Underline = false, Strike = false,
+                            LetterSpacing = 0, LineSpacing = 0,
+                            Align = 1,               // 居中
+                            FontScale = fontScale,
+                            FsToS = fsToS,
+                        };
+                        _watermarks.Add(box);
+                        result["textOverlay"] = new Dictionary<string, object>
+                        {
+                            ["ok"] = true,
+                            ["id"] = box.Id,
+                            ["text"] = box.Text,
+                            ["page"] = box.Page,
+                        };
+                    }
+                    else
+                    {
+                        result["textOverlay"] = new Dictionary<string, object> { ["ok"] = false, ["error"] = "请先加载 PDF 文件" };
+                    }
+                }
+                catch (Exception exWm)
+                {
+                    // 叠字失败不阻断盖章（章已盖上），仅回传提示
+                    try { AppLog.Write("[STAMP-TEXT] 叠字失败：" + exWm.Message); } catch { }
+                    result["textOverlay"] = new Dictionary<string, object> { ["ok"] = false, ["error"] = exWm.Message };
+                }
+                return Json(result);
+            }
+            catch (Exception ex) { return "{\"ok\":false,\"error\":" + Json(ex.Message) + "}"; }
+        }
         /// <summary>指定范围页盖章：点击结束页触发，自动在 [startPage..endPage] 每页同一位置盖章（每页独立随机位移/旋转/纹理种子，对齐 WPF）。返回 {ok,count,batchId}。</summary>
         public string AddRangeStamps(float xRatio, float yRatio, int startPage, int endPage)
         {

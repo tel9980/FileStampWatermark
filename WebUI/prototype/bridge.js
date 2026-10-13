@@ -15,6 +15,9 @@
     window.Bridge = null; // 纯浏览器降级
     return;
   }
+  // V1.1.1.0：暴露 C# 桥宿主对象本体——供前端做「壳是否支持某新方法」的能力探测
+  // （如 AddManualStampWithText：老壳缺该方法时前端自动降级为普通盖章，绝不因缺方法而功能失效）
+  window.CSharpBridge = csharp;
   window.Bridge = {
     available: true,
     invoke: function (name) {

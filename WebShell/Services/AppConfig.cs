@@ -1127,6 +1127,12 @@ namespace PDFQFZ.WPF.Services
             public int TextureRadial = 20;       // 径向压印上限 0-100（中心深边缘浅）V1.0.0.83：默认 20
             public int TextureCast = 0;         // 整体色偏上限 0-100（印泥批次色差）V1.0.0.83：默认 0（不变）
             public int TexturePresetIndex = 0;  // 当前渲染方案（0=自定义，1-4=方案N，随章记忆，见规范 §7.3）
+            // V1.1.1.0：盖章叠字（章上叠一行文字）——随章记忆，仅手动盖章生效
+            public bool TextOverlayEnabled = false; // 是否在盖章时顺带在章上叠一行文字
+            public string TextOverlayText = "";     // 叠字文字（空=不叠）
+            public int TextOverlayPos = 0;          // 叠字位置 0=章中心 1=章上方 2=章下方
+            public int TextOverlayColorArgb = unchecked((int)0xFFC00000); // 叠字颜色（默认印泥红）
+            public int TextOverlaySize = 30;        // 叠字高度占章尺寸的百分比（10~100，默认 30）
         }
 
         private static string StampParamSection(string stampFileName)
@@ -1184,6 +1190,12 @@ namespace PDFQFZ.WPF.Services
                 p.TextureRadial = ini.GetIniInt(sec, "textureRadial", p.TextureRadial);
                 p.TextureCast = ini.GetIniInt(sec, "textureCast", p.TextureCast);
                 p.TexturePresetIndex = ini.GetIniInt(sec, "texturePresetIndex", 0);
+                // V1.1.1.0：盖章叠字（旧 config.ini 无这些键 → 回落默认值）
+                p.TextOverlayEnabled = ini.GetIniInt(sec, "textOverlayEnabled", 0) == 1;
+                p.TextOverlayText = ini.ContentValue(sec, "textOverlayText") ?? "";
+                p.TextOverlayPos = ini.GetIniInt(sec, "textOverlayPos", p.TextOverlayPos);
+                p.TextOverlayColorArgb = ini.GetIniInt(sec, "textOverlayColorArgb", p.TextOverlayColorArgb);
+                p.TextOverlaySize = ini.GetIniInt(sec, "textOverlaySize", p.TextOverlaySize);
             }
             catch
             {
@@ -1248,6 +1260,12 @@ namespace PDFQFZ.WPF.Services
                 ini.WriteIniInt(sec, "textureRadial", p.TextureRadial);
                 ini.WriteIniInt(sec, "textureCast", p.TextureCast);
                 ini.WriteIniInt(sec, "texturePresetIndex", p.TexturePresetIndex);
+                // V1.1.1.0：盖章叠字（写空串=清除文字，避免旧值残留）
+                ini.WriteIniInt(sec, "textOverlayEnabled", p.TextOverlayEnabled ? 1 : 0);
+                ini.WriteIniString(sec, "textOverlayText", p.TextOverlayText ?? "");
+                ini.WriteIniInt(sec, "textOverlayPos", p.TextOverlayPos);
+                ini.WriteIniInt(sec, "textOverlayColorArgb", p.TextOverlayColorArgb);
+                ini.WriteIniInt(sec, "textOverlaySize", p.TextOverlaySize);
             }
             catch
             {
