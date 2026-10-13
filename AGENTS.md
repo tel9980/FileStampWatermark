@@ -42,6 +42,9 @@
 - **1.1.1.2**（2026-10-13）：批量处理并行化——`StampBatchWorker.Run` 目录模式改 `Parallel.ForEach`（并行度 = CPU 核心数），
   多核机器处理文件夹 PDF 吞吐提升 3–8×；输出命名 `GetNextOutputPath` 天然线程安全，回调线程安全由前端 `Dispatcher.Invoke` 保证。
 
+- **1.1.1.3**（2026-10-13）：图片批量水印并行化——`ImageWatermarkEngine.RunBatch` 改 `Parallel.ForEach`（并行度 = CPU 核心数），
+  拖入图片文件夹加水印吞吐提升 3–8×；`GetNextOutputPath` 与 `_watermarks` 均线程安全。
+
 ## 四、线上历史与本地调试历史分离（2026-10-08 确立）
 
 - 线上 main 只保留发布 commit：每个发布一个 commit（`发布 1.0.0`、`发布 1.1.0`…），并打对应 tag（v1.0.0、v1.1.0…）。线上 commit 历史必须保持"只有发布节点"的干净结构，**禁止把调试 commit 推上线上**。
