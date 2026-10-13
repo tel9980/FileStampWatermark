@@ -91,8 +91,10 @@ PY
         run: |
           set -euo pipefail
           # 黑名单模式（正则，忽略大小写）
+          # 注意：印章/公章/seal 只拦图片资源（*.png/jpg/bmp/ico 等），
+          # 代码文件如 SealLib.cs / sealLib.js / list_seals.py 允许入库，此前 broad 写法会误伤。
           BLACKLIST=(
-            '公章|印章|seal'
+            '(公章|印章|seal)[^/]*\.(png|jpg|jpeg|bmp|gif|ico)$'
             '交付版本'
             '备份文件夹|备份[^a-zA-Z]'
             'E2E[\\/]'
