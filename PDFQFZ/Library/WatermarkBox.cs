@@ -40,6 +40,10 @@ namespace PDFQFZ.Library
         public List<float> WrapLineWidths; // V315: 前端测量的每行宽度比例（行宽/框宽）——保证水平方向完全一致
         public List<float> WrapLineTopRatios; // V323: 前端测量的每行高度比例（行高/框高）——保证垂直方向完全一致
 
+        /// <summary>V1.1.1.0：叠字框标记——true=盖章叠字生成（AddManualStampWithText），不受「文字水印」开关闸门，
+        /// 只要叠字功能开启且手动盖章即输出到 PDF；false=普通文字水印框（受 _watermarkEnabled 开关控制）。</summary>
+        public bool IsTextOverlay;
+
         public WatermarkBox Clone()
         {
             return new WatermarkBox
@@ -65,7 +69,8 @@ namespace PDFQFZ.Library
                 FsToS = FsToS,
                 WrapLines = WrapLines == null ? null : new List<string>(WrapLines),
                 WrapLineWidths = WrapLineWidths == null ? null : new List<float>(WrapLineWidths),
-                WrapLineTopRatios = WrapLineTopRatios == null ? null : new List<float>(WrapLineTopRatios)
+                WrapLineTopRatios = WrapLineTopRatios == null ? null : new List<float>(WrapLineTopRatios),
+                IsTextOverlay = IsTextOverlay
             };
         }
 

@@ -171,6 +171,7 @@ namespace PDFQFZ.WebShell.Services
                             Align = 1,               // 居中
                             FontScale = fontScale,
                             FsToS = fsToS,
+                            IsTextOverlay = true,    // 叠字框标记：不受「文字水印」开关闸门，盖章即输出
                         };
                         _watermarks.Add(box);
                         result["textOverlay"] = new Dictionary<string, object>

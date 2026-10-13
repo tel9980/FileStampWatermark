@@ -272,10 +272,11 @@ namespace PDFQFZ.WebShell.Services
                 ["bold"] = b.Bold, ["italic"] = b.Italic, ["underline"] = b.Underline, ["strike"] = b.Strike,
                 ["letterSpacing"] = b.LetterSpacing, ["lineSpacing"] = b.LineSpacing,
                 ["align"] = b.Align, ["fontScale"] = (double)(b.FontScale > 0 ? b.FontScale : 0.8),
-                ["h0"] = (double)b.H0,
-                ["fsToS"] = (double)b.FsToS,
-                ["wrapLines"] = b.WrapLines ?? new List<string>()
-            };
+                ["h0"] = (double)b.H0,
+                ["fsToS"] = (double)b.FsToS,
+                ["wrapLines"] = b.WrapLines ?? new List<string>(),
+                ["isTextOverlay"] = b.IsTextOverlay // V1.1.1.0：叠字框标记（方案保存/加载不丢）
+            };
         }
 
         public static WatermarkBox DictToBox(Dictionary<string, object> d)
@@ -291,10 +292,11 @@ namespace PDFQFZ.WebShell.Services
                 Bold = GetBool(d, "bold", false), Italic = GetBool(d, "italic", false),
                 Underline = GetBool(d, "underline", false), Strike = GetBool(d, "strike", false),
                 LetterSpacing = GetInt(d, "letterSpacing", 0), LineSpacing = GetInt(d, "lineSpacing", 0),
-                Align = GetInt(d, "align", 0), FontScale = GetFloat(d, "fontScale", 0.8f),
-                H0 = GetFloat(d, "h0", 0f),
-                FsToS = Math.Max(0f, GetFloat(d, "fsToS", 0f))
-            };
+                Align = GetInt(d, "align", 0), FontScale = GetFloat(d, "fontScale", 0.8f),
+                H0 = GetFloat(d, "h0", 0f),
+                FsToS = Math.Max(0f, GetFloat(d, "fsToS", 0f)),
+                IsTextOverlay = GetBool(d, "isTextOverlay", false) // V1.1.1.0：叠字框标记
+            };
             if (b.W <= 0f || b.W > 1f) b.W = 0.3f;
             if (b.H <= 0f || b.H > 1f) b.H = 0.05f;
             if (b.X < 0f || b.X > 1f) b.X = 0.3f;

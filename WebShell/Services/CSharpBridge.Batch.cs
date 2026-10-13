@@ -511,7 +511,8 @@ namespace PDFQFZ.WebShell.Services
                     WzPercent = wzPercent,
                     MaxSplit = Math.Max(0, maxSplit), // V390：保留 0=自动语义，由 StampEngine 按该文件页数解析（此前 Math.Max(1,0)=1 → 骑缝章 tmp=0 除零）
                     Placements = _stampPlacements,
-                    Watermarks = _watermarkEnabled ? _watermarks.Snapshot() : null, // V2.4.0.96：文字水印（开关关闭不输出；PDFWatermark 按 sourcepath 过滤）
+                    // V1.1.1.0：叠字框（IsTextOverlay）始终输出，不受「文字水印」开关闸门；普通水印框仍受 _watermarkEnabled 控制
+                    Watermarks = _watermarks.Snapshot().Where(b => b.IsTextOverlay || _watermarkEnabled).ToList(),
                     TextureEnabled = spG.TextureQuality,
                     TextureSeed = NewTextureSeed(),
                     TextureBrightness = spG.TextureBrightness, TextureBlob = spG.TextureBlob,
@@ -558,7 +559,7 @@ namespace PDFQFZ.WebShell.Services
                         int djB = string.Equals(mode, "overlay", StringComparison.OrdinalIgnoreCase) ? 0 : 1;
                         int dpiB = dpi < 72 ? 72 : (dpi > 600 ? 600 : dpi);
                         var previewSnap = _stampPlacements.Snapshot(); // UI 线程快照，Task 内只读快照不碰共享集合
-                        var wmSnap = _watermarkEnabled ? _watermarks.Snapshot() : null; // V2.4.0.96：文字水印框快照（文件夹模式逐文件按 sourcepath 过滤）
+                        var wmSnap = _watermarks.Snapshot().Where(b => b.IsTextOverlay || _watermarkEnabled).ToList(); // V1.1.1.0：叠字框始终输出；普通水印框受开关控制
                         var filesB = batchFiles; var outDirB2 = outDirB; var namingB = naming;
                         Task.Run(() =>
                         {
