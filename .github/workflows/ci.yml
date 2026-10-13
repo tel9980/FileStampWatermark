@@ -52,36 +52,9 @@ jobs:
         run: |
           set -euo pipefail
           cd WebUI/prototype
-          # 提取 <script>...</script> 里的内容（不含 src= 的外链）
-          # 这里只做简单提取：拿第一个完整 script 块
-          # 更完整的可用 python 脚本，但通常 index.html 只有一个内联 script
-          python3 - <<'PY'
-import re, sys, tempfile, subprocess, os
-html = open('index.html','r',encoding='utf-8').read()
-# 找所有不带 src= 的 <script>...</script>
-blocks = re.findall(r'<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>', html, flags=re.DOTALL|re.IGNORECASE)
-if not blocks:
-    print("无内联 script，跳过")
-    sys.exit(0)
-for i, block in enumerate(blocks):
-    # 去掉可能的 type=module 等
-    block = block.strip()
-    if not block:
-        continue
-    # 写临时文件跑 node --check
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.js', delete=False, encoding='utf-8') as f:
-        f.write(block)
-        tmp = f.name
-    try:
-        r = subprocess.run(['node','--check',tmp], capture_output=True, text=True)
-        if r.returncode != 0:
-            print(f"FAIL: index.html 内联 script #{i+1}")
-            print(r.stderr)
-            sys.exit(1)
-    finally:
-        os.unlink(tmp)
-print(f"✅ index.html {len(blocks)} 个内联 script 语法通过")
-PY
+          # 提取 <script>...</script> 里的内容（不含 src= 的外链）用 node --check
+          # （脚本在 .github/scripts/check_inline_js.py，避免 YAML 块内 heredoc 顶格导致 YAML 语法错误）
+          python3 "${GITHUB_WORKSPACE}/.github/scripts/check_inline_js.py" index.html
 
       # ──────────────────────────────────────────────
       # 4. 白名单守卫（AGENTS.md 铁律：防公章/印章/交付版本/备份/.exe 入库）
