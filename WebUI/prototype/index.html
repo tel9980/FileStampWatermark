@@ -735,7 +735,7 @@ button,input,select,textarea{font-family:inherit}
               </div>
               <!-- V1.1.1.4：原文浮于章上（章衬于文字层之下；预览仍显示章在上，以输出 PDF 为准；扫描件整页图片无文字层时章会看不见） -->
               <div v-show="navSectOn('stamp','param') && stampSect.disp" class="row">
-                <el-tooltip content="开启后：输出 PDF 时印章盖在文字层之下，合同原文（委托方/单位名称/日期）浮在章图案之上。预览仍显示章在上，以输出文件为准；扫描件（整页是图片、无文字层）请勿开启，否则章会被图片盖住看不见" placement="top">
+                <el-tooltip content="开启后：输出 PDF 时印章盖在文字层之下，合同原文（委托方/单位名称/日期）浮在章图案之上。预览仍显示章在上，以输出文件为准；扫描件（整页是图片、无文字层）请勿开启，否则章会被图片盖住看不见——若误开，软件会自动回落章压字并在日志提示" placement="top">
                   <el-checkbox v-model="stampUnderText">印章衬于文字下（原文浮于章上）</el-checkbox>
                 </el-tooltip>
               </div>

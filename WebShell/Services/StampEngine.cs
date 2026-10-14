@@ -121,6 +121,44 @@ namespace PDFQFZ.WPF.Services
         }
 
         // ===================== 盖章核心 =====================
+        /// <summary>V1.1.1.5：判断某页是否被整页图片覆盖（扫描件/OCR件/整页底图）。
+        /// 衬底模式（GetUnderContent）下章会被这类图片完全盖住→看不见，需自动回落章压字。
+        /// 判定：顶层 XObject 有图片且像素宽高均≥页面点数（72dpi 下 1px=1pt，扫描件 dpi 更高像素只会更大）。
+        /// Resources 可能继承自父节点，沿 PARENT 链向上找。</summary>
+        private static bool PageCoveredByFullImage(PdfReader reader, int page)
+        {
+            try
+            {
+                if (reader == null || page < 1 || page > reader.NumberOfPages) return false;
+                var size = reader.GetPageSizeWithRotation(page);
+                float pw = size.Width, ph = size.Height;
+                if (pw <= 0 || ph <= 0) return false;
+                PdfDictionary dict = reader.GetPageN(page);
+                PdfDictionary res = null;
+                int guard = 0;
+                while (dict != null && guard++ < 10)
+                {
+                    res = dict.GetAsDict(PdfName.RESOURCES);
+                    if (res != null) break;
+                    dict = dict.GetAsDict(PdfName.PARENT);
+                }
+                if (res == null) return false;
+                PdfDictionary xobjs = res.GetAsDict(PdfName.XOBJECT);
+                if (xobjs == null) return false;
+                foreach (PdfName key in xobjs.Keys)
+                {
+                    PdfStream st = PdfReader.GetPdfObject(xobjs.Get(key)) as PdfStream;
+                    if (st == null) continue;
+                    if (!PdfName.IMAGE.Equals(st.GetAsName(PdfName.SUBTYPE))) continue;
+                    PdfNumber w = st.GetAsNumber(PdfName.WIDTH);
+                    PdfNumber h = st.GetAsNumber(PdfName.HEIGHT);
+                    if (w == null || h == null) continue;
+                    if (w.IntValue >= pw && h.IntValue >= ph) return true;
+                }
+            }
+            catch { }
+            return false;
+        }
         public static bool PDFWatermark(
             StampOptions opt,
             Bitmap seamImage,
@@ -185,6 +223,8 @@ namespace PDFQFZ.WPF.Services
                 if (opt.WzType == 2 || opt.WzType == 1) qfzList.Reverse();
 
                 PdfContentByte waterMarkContent;
+                // V1.1.1.5：整页图片回落标记（衬底会被图片盖住的页自动改章压字，输出后统一提示一次）
+                bool underFallback = false;
 
                 if (opt.QfzType != 1 && qfzPages > 1)
                 {
@@ -211,8 +251,10 @@ namespace PDFQFZ.WPF.Services
                         for (int y = 0; y < tmp; y++)
                         {
                             int page = qfzList[startIndex + y];
-                            // V1.1.1.4：原文浮于章上时骑缝章同样衬于文字层之下
-                            waterMarkContent = opt.StampUnderText ? pdfStamper.GetUnderContent(page) : pdfStamper.GetOverContent(page);
+                            // V1.1.1.5：整页图片（扫描件/OCR件）自动回落章压字，否则章被图片盖住看不见
+                            bool underSeam = opt.StampUnderText && !PageCoveredByFullImage(pdfReader, page);
+                            if (opt.StampUnderText && !underSeam) underFallback = true;
+                            waterMarkContent = underSeam ? pdfStamper.GetUnderContent(page) : pdfStamper.GetOverContent(page);
                             int rotation = pdfReader.GetPageRotation(page);
                             iTextSharp.text.Rectangle psize = pdfReader.GetPageSize(page);
                             bool rotLand = (rotation == 90 || rotation == 270);
@@ -297,7 +339,10 @@ namespace PDFQFZ.WPF.Services
                             continue;
                         }
 
-                        waterMarkContent = opt.StampUnderText ? pdfStamper.GetUnderContent(page) : pdfStamper.GetOverContent(page);
+                        // V1.1.1.5：整页图片（扫描件/OCR件）自动回落章压字，否则章被图片盖住看不见
+                        bool underPg = opt.StampUnderText && !PageCoveredByFullImage(pdfReader, page);
+                        if (opt.StampUnderText && !underPg) underFallback = true;
+                        waterMarkContent = underPg ? pdfStamper.GetUnderContent(page) : pdfStamper.GetOverContent(page);
                         int pageRotation = pdfReader.GetPageRotation(page);
                         iTextSharp.text.Rectangle pageSize = pdfReader.GetPageSize(page);
 
@@ -383,6 +428,9 @@ namespace PDFQFZ.WPF.Services
                     }
                 }
 
+                // V1.1.1.5：整页图片回落提示（衬底会被图片盖住的页已自动改章压字，保证印章可见）
+                if (opt.StampUnderText && underFallback)
+                    log("提示：检测到整页图片（扫描件），已自动改用章压字，保证印章可见；文字版 PDF 才支持原文浮于章上。");
                 return true;
             }
             catch (BadPasswordException)
