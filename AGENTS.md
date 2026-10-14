@@ -58,6 +58,8 @@
     另新增 `wm_debug.log` 分层诊断日志（`config.ini` 段 `[config]` 下 `diagWatermark=1` 开启，无需重编译）：`[COVER]` 打印每个图片 XObject 的像素/绘制/页面尺寸与判定依据，`[LAYER-SEAM]`/`[LAYER-PAGE]`/`[LAYER-WM]` 分别打印骑缝章、页面章、文字框最终落在 `GetUnderContent` 还是 `GetOverContent`。
     **踩坑**：诊断用的中间标记不要写成 `static` 字段——批处理是多文件并发，静态可变状态会跨页/跨文件串扰，必须用方法内局部变量。
 
+- **1.1.1.7**（2026-10-14）：印章库去重检测 + 手动撤销栈——`AppConfig.DetectDuplicateStamps()`（同文件不同名/同名不同文件警示，不阻断）；`StampPlacementCollection.UndoLastManual()`（仅撤回手动章 `batchId=0/type=manual`，LIFO）；桥方法 `CheckSealLibrary`/`UndoManualStamp`（前端按钮「撤销上次盖章」）；启动时异步检查提示（`sealDupTip` 前端变量）。财务场景保障：印章记忆不混乱、误盖可撤回。
+
 ## 四、线上历史与本地调试历史分离（2026-10-08 确立）
 
 - 线上 main 只保留发布 commit：每个发布一个 commit（`发布 1.0.0`、`发布 1.1.0`…），并打对应 tag（v1.0.0、v1.1.0…）。线上 commit 历史必须保持"只有发布节点"的干净结构，**禁止把调试 commit 推上线上**。

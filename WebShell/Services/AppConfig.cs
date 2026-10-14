@@ -736,6 +736,49 @@ namespace PDFQFZ.WPF.Services
             public string Path { get; }
         }
 
+        /// <summary>V1.1.1.6：印章库去重检测（财务印章准确性保障）。检查同一文件被不同显示名重复导入（或同名不同文件），返回重复项列表（不阻断，只警示日志+前端提示）。</summary>
+        public static List<string> DetectDuplicateStamps()
+        {
+            var entries = LoadStampEntries();
+            var duplicates = new List<string>();
+            // 同路径不同名：同一印章图片被重复导入（浪费库空间、记忆混乱）
+            var pathToNames = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+            foreach (var e in entries)
+            {
+                if (string.IsNullOrWhiteSpace(e.Path)) continue;
+                string fullPath = Path.GetFullPath(e.Path);
+                if (!pathToNames.TryGetValue(fullPath, out var names))
+                {
+                    names = new List<string>();
+                    pathToNames[fullPath] = names;
+                }
+                names.Add(e.DisplayName);
+            }
+            foreach (var kv in pathToNames)
+            {
+                if (kv.Value.Count > 1)
+                    duplicates.Add("重复文件（路径相同、名称不同）：" + string.Join(" / ", kv.Value) + " → " + kv.Key);
+            }
+            // 同名不同路径：同显示名指向不同图片（财务印章混乱风险最高）
+            var nameToPaths = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+            foreach (var e in entries)
+            {
+                if (string.IsNullOrWhiteSpace(e.DisplayName)) continue;
+                if (!nameToPaths.TryGetValue(e.DisplayName.Trim(), out var paths))
+                {
+                    paths = new List<string>();
+                    nameToPaths[e.DisplayName.Trim()] = paths;
+                }
+                paths.Add(e.Path);
+            }
+            foreach (var kv in nameToPaths)
+            {
+                if (kv.Value.Count > 1)
+                    duplicates.Add("重复名称（名称相同、文件不同）：" + kv.Key + " → " + string.Join("; ", kv.Value.Select(p => p ?? "无路径")));
+            }
+            return duplicates;
+        }
+
         /// <summary>读取印章条目列表（含显示名）；旧格式（纯路径）自动识别，显示名取文件名不含后缀。</summary>
         public static List<StampEntry> LoadStampEntries()
         {

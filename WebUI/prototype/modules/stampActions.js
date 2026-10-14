@@ -25,6 +25,20 @@ window.PdfqModules.stampActions = {
     },
     /* ---- V1.1.1.0：盖章叠字（章上叠一行文字）---- */
     /* 开关：开启即展开参数区并记忆；文字为空时只提示不拦截（后端同样按空文字=不叠处理） */
+    /* ---- V1.1.1.6：撤销上次手动盖章 ---- */
+    undoManualStamp(){
+      if(!this.pdfLoaded){ this.opHint='请先加载 PDF 文件'; return; }
+      const page = parseInt(this.curPage) || 1;
+      if(window.Bridge && window.Bridge.invoke){
+        window.Bridge.invoke('UndoManualStamp', page).then(function(json){
+          try{
+            const r = JSON.parse(json);
+            if(r.ok && r.undone >= 0){ window.__vm.opHint = '已撤回最近手动章（id='+r.undone+'）'; window.__vm.addLog('已撤回最近手动章（id='+r.undone+'）','ok'); window.__vm.refreshPageStamps(); if(typeof window.__vm.refreshPageWatermarks==='function'){ window.__vm.refreshPageWatermarks(); } }
+            else { window.__vm.opHint = r.reason || '无可撤回的手动章'; window.__vm.addLog(r.reason || '无可撤回的手动章', r.ok===false); }
+          }catch(e){ window.__vm.opHint='撤销解析失败'; window.__vm.addLog('撤销解析失败：'+String(json),true); }
+        }, function(e){ window.__vm.opHint='撤销失败：'+e.message; window.__vm.addLog('撤销失败：'+e.message,true); });
+      }
+    },
     onTextOvEnable(v){
       if(v){ this.stampSect.textov=true; this.saveTextOvParams(); }
       this.opHint=v?'盖章叠字已启用：每次手动盖章都会在章上叠一行文字（公章需为透明 PNG）':'盖章叠字已关闭';

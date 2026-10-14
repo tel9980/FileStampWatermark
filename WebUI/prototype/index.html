@@ -769,6 +769,10 @@ button,input,select,textarea{font-family:inherit}
               <div v-show="navSectOn('stamp','textov') && stampSect.textov && textOvEnabled" class="row">
                 <span style="font-size:12px;color:var(--text-3);line-height:1.5">叠字只对「手动点击盖章」生效；按文字盖章、范围批量盖章不加。叠出来的字可在「文字水印」页里继续改。</span>
               </div>
+              <!-- V1.1.1.6：印章库去重检测提示（财务场景保障：同一章不同名/同名不同图会混乱记忆与输出命名） -->
+              <div v-show="navSectOn('stamp','param') && stampSect.disp" class="row" style="margin-top:2px">
+                <span v-if="sealDupTip" style="font-size:11px;color:#C85A17;line-height:1.4">{{ sealDupTip }}</span>
+              </div>
               </div>
               <!-- v2.4.0.40：随机角度位移/盖章渲染 已移至左栏顶部（开关+按钮弹窗），原参数区块随迁，此处移除 -->
               <!-- 分区2 骑缝章（二级标题，可折叠） -->
@@ -1519,6 +1523,7 @@ const app = createApp({
       imgFitW:0, imgPageInput:'1', imgOutDir:'', imgBusy:false,
       wmBoxesImg:[], dlgImgMixed:false, imgMixedInfo:null,
       wmWrapResult:{},  /* V297: C# 算的换行结果（key=b.id，value=换行后文本） */
+      sealDupTip:'',      /* V1.1.1.6：印章库去重检测提示（财务印章准确性保障，不阻断，只提示日志+前端） */
       /* 印章参数卡二级分区折叠状态（显示参数/骑缝章/图章去白；v2.4.0.40：随机角度/盖章渲染已迁顶部弹窗，不再折叠） */
       stampSect:{disp:true, ridge:true, white:true, textov:true},
       batchSect:{range:true, text:false, folder:false},
@@ -2240,6 +2245,22 @@ const app = createApp({
 
     this.loadFromShell();
     this.loadStamps();
+    // V1.1.1.6：印章库去重检测（启动时异步检查，不阻断主流程；重复项提示写入前端 + 系统日志）
+    if(window.Bridge && window.Bridge.invoke){
+      window.Bridge.invoke('CheckSealLibrary').then(function(json){
+        try{
+          const r = JSON.parse(json);
+          if(r.ok && r.duplicates && r.duplicates.length > 0){
+            const self = window.__vm || { opHint:'', addLog:function(m,err){ console.log('[SEAL-DUP]', m); } };
+            const tip = '印章库检测到 '+r.duplicates.length+' 项重复印章（同一文件不同名称/同名不同文件），详见系统日志；建议整理印章库避免记忆混乱';
+            if(self && typeof self.$nextTick === 'function'){
+              self.$nextTick(function(){ self.sealDupTip = tip; });
+            } else { self.sealDupTip = tip; }
+            if(typeof self.addLog === 'function') self.addLog(tip, true);
+          }
+        }catch(e){ console.warn('[SEAL-DUP] 解析失败', e); }
+      }, function(e){ console.warn('[SEAL-DUP] 调用失败', e); });
+    }
     // 按窗口宽度初始化左栏宽度：窄窗口（<1200px）用最小可用宽度，宽窗口默认 680（用户规范：800*600~2560*1440 布局不乱）
     const _mx=Math.min(760,window.innerWidth-10-620-8); this.leftWidth=Math.max(Math.min(this.leftMinW,_mx),Math.min(680,_mx)); // v2.4.0.36：启动按内容宽约束（左栏最小600；窗口最小1226时内容1210=600+10+600）
     // v2.4.0.36：测量左栏最小宽度（渲染完成/字体就绪/窗口变化时刷新）
