@@ -1081,6 +1081,9 @@ button,input,select,textarea{font-family:inherit}
         <div class="bottom-area">
           <div class="gen-card">
             <el-button class="btn-generate" style="height:34px" :loading="generating || imgBusy" @click="handleGenerate()">生成结果文件</el-button>
+            <el-tooltip content="撤销上一次手动盖章（仅撤回手动章，不影响批量/范围/按文字章）" placement="top">
+              <el-button :disabled="!pdfLoaded" style="margin-left:8px;height:34px" @click="undoManualStamp()">撤销上次盖章</el-button>
+            </el-tooltip>
           </div>
           <div class="op-hint">
             <div class="op-bar"><span v-html="opHintHtml()"></span><span v-if="genMerging" class="gen-dots"><i></i><i></i><i></i></span></div>
@@ -2142,6 +2145,17 @@ const app = createApp({
     'tex.brightness'(){this.saveStampParams();this._texSyncDebounce();}, 'tex.pressure'(){this.saveStampParams();this._texSyncDebounce();},
     'tex.blob'(){ if(this.tex.blob<=0&&this.tex.blobSize!==0){ this.tex.blobSize=0; } this.saveStampParams();this._texSyncDebounce(); }, 'tex.blobSize'(){this.saveStampParams();this._texSyncDebounce();},
     'tex.gradient'(){this.saveStampParams();this._texSyncDebounce();}, 'tex.hue'(){this.saveStampParams();this._texSyncDebounce();}, 'tex.white'(){this.saveStampParams();this._texSyncDebounce();},
+    undoManualStamp(){
+      if(!window.Bridge || !this.pdfLoaded){ this.opHint='请先加载 PDF 文件'; return; }
+      const page = parseInt(this.curPage) || 1;
+      window.Bridge.invoke('UndoManualStamp', page).then(function(json){
+        try{
+          const r = JSON.parse(json);
+          if(r.ok && r.undone && r.undone >= 0){ window.__vm.opHint = '已撤回最近手动章（id='+r.undone+'）'; window.__vm.addLog('已撤回最近手动章（id='+r.undone+'）','ok'); window.__vm.refreshPageStamps(); if(typeof window.__vm.refreshPageWatermarks==='function') window.__vm.refreshPageWatermarks(); }
+          else { window.__vm.opHint = r.reason || '无可撤回的手动章'; window.__vm.addLog(r.reason || '无可撤回的手动章', r.ok===false); }
+        }catch(e){ window.__vm.opHint = '撤销解析失败'; window.__vm.addLog('撤销解析失败:'+String(json), true); }
+      }, function(e){ window.__vm.opHint='撤销失败：'+e.message; window.__vm.addLog('撤销失败：'+e.message, true); });
+    },
     preset(){this.saveStampParams();},
 
     /* 切换印章：重新拉取该章参数；骑缝章预览基准图/尺寸随之变化 */

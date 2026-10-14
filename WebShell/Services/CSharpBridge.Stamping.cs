@@ -396,6 +396,20 @@ namespace PDFQFZ.WebShell.Services
             }
             catch (Exception ex) { return "err:" + ex.Message; }
         }
+        /// <summary>V1.1.1.6：撤销最近一次手动盖章（仅撤回手动章 batchId=0/type=manual，不影响批量/范围/按文字章）。
+        /// 按当前文档 + 当前预览页撤回最近手动章（LIFO）；无可撤回时返回 undone=-1。</summary>
+        public string UndoManualStamp(int page)
+        {
+            try
+            {
+                if (_stampPlacements == null || string.IsNullOrWhiteSpace(_stampDocPath))
+                    return "{\"ok\":false,\"reason\":\"无文档或无印章集合\"}";
+                int undone = _stampPlacements.UndoLastManual(_stampDocPath, page);
+                return "{\"ok\":" + (undone >= 0 ? "true" : "false") + ",\"undone\":" + undone + ",\"reason\":" + (undone >= 0 ? "\"已撤回最近手动章 id=\" + undone" : "\"无可撤回的手动章\"") + "}";
+            }
+            catch (Exception ex) { return "{\"ok\":false,\"reason\":" + Json(ex.Message) + "}"; }
+        }
+
         /// <summary>v2.4.0.50：拖拽移动已盖章——按 id 更新页面内比例坐标（钳制 0-1）。返回 {"ok":true} 或 {"ok":false,"error":...}。</summary>
         public string MoveStamp(int id, float xRatio, float yRatio)
         {
