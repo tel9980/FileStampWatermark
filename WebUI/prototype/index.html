@@ -733,7 +733,7 @@ button,input,select,textarea{font-family:inherit}
                 <div class="disp-cell"><label>不透明度</label><el-input-number class="tbl-input" v-model="opacity" :min="0" :max="100" controls-position="right" style="width:88px" @change="sealParamNoSealTip"></el-input-number><span class="unit">%</span></div>
                 <div class="disp-cell"><label>旋转</label><el-input-number class="tbl-input" v-model="rotation" :min="-360" :max="360" controls-position="right" style="width:88px" @change="sealParamNoSealTip"></el-input-number><span class="unit">°</span></div>
               </div>
-              <!-- V1.1.1.4：原文浮于章上（章衬于文字层之下；预览仍显示章在上，以输出 PDF 为准；扫描件整页图片无文字层时章会看不见） -->
+              <!-- V1.1.1.4：原文浮于章上（章衬于文字层之下）；V1.1.1.6：修正整页图片误判——带透明通道(SMask)或实际未铺满页面的大图不再触发回落，Word/合同导出件不再被当扫描件而静默改成章压字；真正扫描件（1:1 铺满且不透明）仍回落保证章可见 -->
               <div v-show="navSectOn('stamp','param') && stampSect.disp" class="row">
                 <el-tooltip content="开启后：输出 PDF 时印章盖在文字层之下，合同原文（委托方/单位名称/日期）浮在章图案之上。预览仍显示章在上，以输出文件为准；扫描件（整页是图片、无文字层）请勿开启，否则章会被图片盖住看不见——若误开，软件会自动回落章压字并在日志提示" placement="top">
                   <el-checkbox v-model="stampUnderText">印章衬于文字下（原文浮于章上）</el-checkbox>

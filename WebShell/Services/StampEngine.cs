@@ -133,6 +133,7 @@ namespace PDFQFZ.WPF.Services
                 var size = reader.GetPageSizeWithRotation(page);
                 float pw = size.Width, ph = size.Height;
                 if (pw <= 0 || ph <= 0) return false;
+                if (DiagEnabled) try { System.IO.File.AppendAllText(System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "wm_debug.log"), DateTime.Now.ToString("HH:mm:ss.fff") + " [COVER] page=" + page + " 页面pt=" + pw.ToString("F0") + "x" + ph.ToString("F0") + Environment.NewLine, System.Text.Encoding.UTF8); } catch { }
                 PdfDictionary dict = reader.GetPageN(page);
                 PdfDictionary res = null;
                 int guard = 0;
@@ -142,22 +143,227 @@ namespace PDFQFZ.WPF.Services
                     if (res != null) break;
                     dict = dict.GetAsDict(PdfName.PARENT);
                 }
-                if (res == null) return false;
+                if (res == null) { if (DiagEnabled) try { System.IO.File.AppendAllText(System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "wm_debug.log"), DateTime.Now.ToString("HH:mm:ss.fff") + " [COVER] page=" + page + " 无Resources(含PARENT链) → 判false" + Environment.NewLine, System.Text.Encoding.UTF8); } catch { } return false; }
                 PdfDictionary xobjs = res.GetAsDict(PdfName.XOBJECT);
-                if (xobjs == null) return false;
+                if (xobjs == null) { if (DiagEnabled) try { System.IO.File.AppendAllText(System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "wm_debug.log"), DateTime.Now.ToString("HH:mm:ss.fff") + " [COVER] page=" + page + " 有Resources但无XObject → 判false（文字版PDF正常路径）" + Environment.NewLine, System.Text.Encoding.UTF8); } catch { } return false; }
+                int imgTotal = 0, skipTransparent = 0, skipSmallDraw = 0;
                 foreach (PdfName key in xobjs.Keys)
                 {
                     PdfStream st = PdfReader.GetPdfObject(xobjs.Get(key)) as PdfStream;
                     if (st == null) continue;
                     if (!PdfName.IMAGE.Equals(st.GetAsName(PdfName.SUBTYPE))) continue;
+                    imgTotal++;
                     PdfNumber w = st.GetAsNumber(PdfName.WIDTH);
                     PdfNumber h = st.GetAsNumber(PdfName.HEIGHT);
-                    if (w == null || h == null) continue;
-                    if (w.IntValue >= pw && h.IntValue >= ph) return true;
+                    if (w == null || h == null) { if (DiagEnabled) try { System.IO.File.AppendAllText(System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "wm_debug.log"), DateTime.Now.ToString("HH:mm:ss.fff") + " [COVER] page=" + page + " XObject#" + imgTotal + " 无WIDTH/HEIGHT → 跳过" + Environment.NewLine, System.Text.Encoding.UTF8); } catch { } continue; }
+
+                    // V1.1.1.6 误判修复①：带透明通道（SMask/软掩码）的图片不算"整页覆盖"。
+                    // 半透明 logo、带 alpha 的 Word 导出底图不会完全遮住衬于其下的印章，不应触发回落。
+                    if (st.GetAsDict(PdfName.SMASK) != null)
+                    {
+                        skipTransparent++;
+                        if (DiagEnabled) try { System.IO.File.AppendAllText(System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "wm_debug.log"), DateTime.Now.ToString("HH:mm:ss.fff") + " [COVER] page=" + page + " XObject#" + imgTotal + " 像素=" + w.IntValue + "x" + h.IntValue + " 有SMask(透明通道) → 不算整页覆盖，跳过" + Environment.NewLine, System.Text.Encoding.UTF8); } catch { }
+                        continue;
+                    }
+
+                    // V1.1.1.6 误判修复②：像素尺寸大 ≠ 铺满页面。必须叠加"实际绘制尺寸"判定——
+                    // 扫描件是 1:1 铺满（缩放矩阵≈1，字面尺寸≈页面点尺寸）；
+                    // Word/合同导出的大图往往被缩小后放在页角，按像素尺寸判定会把它们误当扫描件，
+                    // 从而静默推翻用户的"原文浮于章上"设置（v1.1.1.5 的实际投诉根因）。
+                    float drawW = 0f, drawH = 0f;
+                    if (!TryGetImageDrawSize(reader, page, key, out drawW, out drawH))
+                    {
+                        // 拿不到绘制矩阵（内容流被压缩/异常）→ 保守判 false，让用户设置按原意生效
+                        skipSmallDraw++;
+                        if (DiagEnabled) try { System.IO.File.AppendAllText(System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "wm_debug.log"), DateTime.Now.ToString("HH:mm:ss.fff") + " [COVER] page=" + page + " XObject#" + imgTotal + " 无法解析绘制矩阵 → 保守判false（保用户设置）" + Environment.NewLine, System.Text.Encoding.UTF8); } catch { }
+                        continue;
+                    }
+                    // 覆盖判定：绘制尺寸 ≥ 页面尺寸 98%（留 2% 容差，避免扫描件因边框/裁切差异漏判）
+                    bool cover = drawW >= pw * 0.98f && drawH >= ph * 0.98f;
+                    if (DiagEnabled) try { System.IO.File.AppendAllText(System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "wm_debug.log"), DateTime.Now.ToString("HH:mm:ss.fff") + " [COVER] page=" + page + " XObject#" + imgTotal + " 像素=" + w.IntValue + "x" + h.IntValue + " 绘制=" + drawW.ToString("F1") + "x" + drawH.ToString("F1") + "pt 页面pt=" + pw.ToString("F0") + "x" + ph.ToString("F0") + " → " + (cover ? "整页覆盖(扫描件)" : "未铺满") + Environment.NewLine, System.Text.Encoding.UTF8); } catch { }
+                    if (cover) return true;
+                }
+                if (DiagEnabled) try { System.IO.File.AppendAllText(System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "wm_debug.log"), DateTime.Now.ToString("HH:mm:ss.fff") + " [COVER] page=" + page + " 共" + imgTotal + "个图片XObject(透明跳过" + skipTransparent + "/矩阵未知跳过" + skipSmallDraw + ")，无一铺满整页 → 判false，按StampUnderText原意执行" + Environment.NewLine, System.Text.Encoding.UTF8); } catch { }
+            }
+            catch (Exception exC)
+            {
+                if (DiagEnabled) try { System.IO.File.AppendAllText(System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "wm_debug.log"), DateTime.Now.ToString("HH:mm:ss.fff") + " [COVER] page=" + page + " 异常→判false：" + exC.Message + Environment.NewLine, System.Text.Encoding.UTF8); } catch { }
+            }
+            return false;
+        }
+
+        /// <summary>V1.1.1.6：解析某图片 XObject 在该页的实际绘制尺寸（pt）。
+        /// 自包含实现：直接扫 PdfReader.GetPageContent 返回的已解码内容流字节，
+        /// 手工做 token 切分，只跟踪 q/Q 栈、cm（CTM 累乘）和 Do（取图片固有尺寸×当前 CTM）。
+        /// 刻意不依赖 iTextSharp 内部 parser/tokenizer 类型（那些在不同小版本间可见性不稳定），
+        /// 保证编译可预期；解析失败一律返回 false，由调用方"保守不回落"。
+        /// 注意：GetPageContent 已解码 Flate，故可直接按 PDF 语法扫；数组对象 (...)/dict<<>> 用深度计数跳过。</summary>
+        private static bool TryGetImageDrawSize(PdfReader reader, int page, PdfName xobjName, out float drawW, out float drawH)
+        {
+            drawW = 0f; drawH = 0f;
+            try
+            {
+                PdfDictionary pageDict = reader.GetPageN(page);
+                if (pageDict == null) return false;
+                byte[] content = reader.GetPageContent(pageDict);
+                if (content == null || content.Length == 0) return false;
+
+                // 目标名称：PdfName.ToString() 形如 "/Im0"，取去掉前导斜杠的部分
+                string target = xobjName.ToString();
+                if (string.IsNullOrEmpty(target)) return false;
+                if (target[0] == '/') target = target.Substring(1);
+
+                // 先取图片固有像素尺寸（ctm 为单位阵时的结果就是像素尺寸，这里用绝对值兜底）
+                PdfDictionary res = pageDict.GetAsDict(PdfName.RESOURCES);
+                PdfDictionary xobjs = res == null ? null : res.GetAsDict(PdfName.XOBJECT);
+                PdfStream stm = xobjs == null ? null : PdfReader.GetPdfObject(xobjs.Get(xobjName)) as PdfStream;
+                if (stm == null) return false;
+                var wN = stm.GetAsNumber(PdfName.WIDTH);
+                var hN = stm.GetAsNumber(PdfName.HEIGHT);
+                if (wN == null || hN == null) return false;
+                int pxW = Math.Abs(wN.IntValue), pxH = Math.Abs(hN.IntValue);
+                if (pxW <= 0 || pxH <= 0) return false;
+
+                // CTM 状态：6 元素仿射 [a b c d e f]
+                float[] ctm = new float[] { 1f, 0f, 0f, 1f, 0f, 0f };
+                var qs = new System.Collections.Generic.Stack<float[]>();
+                var operands = new System.Collections.Generic.List<float>(6);
+                bool pendingTarget = false; // 扫描期局部标记：最近读到的名称是否命中目标（不设静态字段，避免批处理并发串扰）
+
+                int i = 0, n = content.Length;
+                while (i < n)
+                {
+                    byte b = content[i];
+                    // 空白与注释
+                    if (b == 0x20 || b == 0x0A || b == 0x0D || b == 0x09 || b == 0x0C || b == 0x00) { i++; continue; }
+                    if (b == (byte)'%')
+                    {
+                        i++;
+                        while (i < n && content[i] != 0x0A && content[i] != 0x0D) i++;
+                        continue;
+                    }
+                    // 数组 (...)：深度计数跳过（内嵌图像 BPC/Color 指令在数组里，不影响 CTM）
+                    if (b == (byte)'(')
+                    {
+                        i++; int depth = 1;
+                        while (i < n && depth > 0)
+                        {
+                            if (content[i] == (byte)'\\') { i += 2; continue; }
+                            if (content[i] == (byte)'(') depth++;
+                            else if (content[i] == (byte)') depth--;
+                            i++;
+                        }
+                        continue;
+                    }
+                    // 字典 <<...>>：深度计数跳过
+                    if (b == (byte)'<' && i + 1 < n && content[i + 1] == (byte)'<')
+                    {
+                        i += 2; int depth = 2;
+                        while (i < n && depth > 0)
+                        {
+                            if (content[i] == (byte)'<' && i + 1 < n && content[i + 1] == (byte)'<') { depth++; i += 2; continue; }
+                            if (content[i] == (byte)'>' && i + 1 < n && content[i + 1] == (byte)'>') { depth--; i += 2; continue; }
+                            i++;
+                        }
+                        continue;
+                    }
+                    // 十六进制串 <...>：跳过（SMask 引用等）
+                    if (b == (byte)'<')
+                    {
+                        i++; while (i < n && content[i] != (byte)'>') i++; i++; continue;
+                    }
+                    // 数字（可能带小数点/负号）
+                    if ((b >= (byte)'0' && b <= (byte)'9') || b == (byte)'.' || b == (byte)'-' || b == (byte)'+')
+                    {
+                        int st = i;
+                        if (content[i] == (byte)'-' || content[i] == (byte)'+') i++;
+                        while (i < n)
+                        {
+                            byte d = content[i];
+                            if ((d >= (byte)'0' && d <= (byte)'9') || d == (byte)'.' || d == (byte)'-' || d == (byte)'+') { i++; continue; }
+                            break;
+                        }
+                        string numStr = System.Text.Encoding.ASCII.GetString(content, st, i - st);
+                        float fv;
+                        if (float.TryParse(numStr, System.Globalization.NumberStyles.Float,
+                                System.Globalization.CultureInfo.InvariantCulture, out fv))
+                        {
+                            operands.Add(fv);
+                        }
+                        continue;
+                    }
+                    // 名称 /Name
+                    if (b == (byte)'/')
+                    {
+                        i++; int st = i;
+                        while (i < n)
+                        {
+                            byte d = content[i];
+                            bool delim = d <= 0x20 || d == (byte)'/' || d == (byte)'(' || d == (byte)')' ||
+                                         d == (byte)'<' || d == (byte)'>' || d == (byte)'[' || d == (byte)']' ||
+                                         d == (byte)'{' || d == (byte)'}' || d == (byte)'/' || d == (byte)'%';
+                            if (delim) break;
+                            i++;
+                        }
+                        operands.Add(float.NaN); // 占位：名称与数字混栈，用 NaN 标记
+                        // 直接判断是否是我们要的 Do 目标（简化：记录最近名称）
+                        if (System.Text.Encoding.ASCII.GetString(content, st, i - st) == target) pendingTarget = true;
+                        continue;
+                    }
+                    // 操作符（其余可见字符）
+                    {
+                        int st = i;
+                        while (i < n)
+                        {
+                            byte d = content[i];
+                            bool delim = d <= 0x20 || d == (byte)'/' || d == (byte)'(' || d == (byte)')' ||
+                                         d == (byte)'[' || d == (byte)']' || d == (byte)'{' || d == (byte)'}' ||
+                                         d == (byte)'<' || d == (byte)'>' || d == (byte)'%';
+                            if (delim) break;
+                            i++;
+                        }
+                        string op = System.Text.Encoding.ASCII.GetString(content, st, i - st);
+                        if (op.Length == 0) { i++; continue; }
+
+                        if (op == "q") { qs.Push((float[])ctm.Clone()); }
+                        else if (op == "Q") { if (qs.Count > 0) ctm = qs.Pop(); }
+                        else if (op == "cm" && operands.Count >= 6)
+                        {
+                            float[] m = new float[6];
+                            for (int k = 5; k >= 0; k--) m[k] = operands[operands.Count - 6 + k];
+                            ctm = MulMatrix(m, ctm);
+                        }
+                        else if (op == "Do" && pendingTarget)
+                        {
+                            // 命中目标图片：绘制尺寸 = 固有像素 × 当前 CTM 缩放
+                            float sx = (float)Math.Sqrt(Math.Abs(ctm[0] * ctm[3] - ctm[1] * ctm[2]));
+                            if (sx <= 0.0001f) sx = Math.Abs(ctm[0]) > 0.0001f ? Math.Abs(ctm[0]) : Math.Abs(ctm[3]);
+                            drawW = pxW * sx;
+                            drawH = pxH * sx;
+                            return true;
+                        }
+                        pendingTarget = false;
+                        operands.Clear();
+                    }
                 }
             }
-            catch { }
+            catch { return false; }
             return false;
+        }
+
+
+        /// <summary>3x2 仿射矩阵相乘 m × n（PDF cm 语义：先应用 n 再应用 m）。</summary>
+        private static float[] MulMatrix(float[] m, float[] n)
+        {
+            return new float[]
+            {
+                m[0]*n[0] + m[1]*n[2],
+                m[0]*n[1] + m[1]*n[3],
+                m[2]*n[0] + m[3]*n[2],
+                m[2]*n[1] + m[3]*n[3],
+                m[4]*n[0] + m[5]*n[2] + n[4],
+                m[4]*n[1] + m[5]*n[3] + n[5],
+            };
         }
         public static bool PDFWatermark(
             StampOptions opt,
@@ -255,6 +461,8 @@ namespace PDFQFZ.WPF.Services
                             bool underSeam = opt.StampUnderText && !PageCoveredByFullImage(pdfReader, page);
                             if (opt.StampUnderText && !underSeam) underFallback = true;
                             waterMarkContent = underSeam ? pdfStamper.GetUnderContent(page) : pdfStamper.GetOverContent(page);
+                            // V1.1.1.6 诊断：骑缝章层决策（StampUnderText=true 时期望 UNDER，被整页图片拦截时回落 OVER）
+                            if (DiagEnabled) try { System.IO.File.AppendAllText(System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "wm_debug.log"), DateTime.Now.ToString("HH:mm:ss.fff") + " [LAYER-SEAM] page=" + page + " StampUnderText=" + opt.StampUnderText + " → " + (underSeam ? "GetUnderContent(章在原文下)" : "GetOverContent(章压原文)") + Environment.NewLine, System.Text.Encoding.UTF8); } catch { }
                             int rotation = pdfReader.GetPageRotation(page);
                             iTextSharp.text.Rectangle psize = pdfReader.GetPageSize(page);
                             bool rotLand = (rotation == 90 || rotation == 270);
@@ -343,6 +551,11 @@ namespace PDFQFZ.WPF.Services
                         bool underPg = opt.StampUnderText && !PageCoveredByFullImage(pdfReader, page);
                         if (opt.StampUnderText && !underPg) underFallback = true;
                         waterMarkContent = underPg ? pdfStamper.GetUnderContent(page) : pdfStamper.GetOverContent(page);
+                        // V1.1.1.6 诊断：页面章层决策 + 该页叠字/水印框数量（定位"字没浮在章上"是层错还是框没进）
+                        if (DiagEnabled) try {
+                            int nWm = 0; try { nWm = opt.Watermarks == null ? 0 : opt.Watermarks.Count(b => b != null && (b.Page == 0 || b.Page == page)); } catch { }
+                            System.IO.File.AppendAllText(System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "wm_debug.log"), DateTime.Now.ToString("HH:mm:ss.fff") + " [LAYER-PAGE] page=" + page + " StampUnderText=" + opt.StampUnderText + " 章=" + (underPg ? "UNDER(原文下)" : "OVER(压原文)") + " 本章水印框=" + nWm + " 总框=" + (opt.Watermarks==null?0:opt.Watermarks.Count) + Environment.NewLine, System.Text.Encoding.UTF8);
+                        } catch { }
                         int pageRotation = pdfReader.GetPageRotation(page);
                         iTextSharp.text.Rectangle pageSize = pdfReader.GetPageSize(page);
 
@@ -415,6 +628,9 @@ namespace PDFQFZ.WPF.Services
                         if (pageBoxes == null || pageBoxes.Count == 0) continue;
 
                         PdfContentByte wmContent = pdfStamper.GetOverContent(page);
+                        // V1.1.1.6 诊断：水印层固定 OVER（原文之上）。StampUnderText=true 时期望章在 UNDER、
+                        // 叠字在 OVER，此时章被原文盖住——若用户报"字没浮在章上"多半是此路径，看日志比对。
+                        if (DiagEnabled) try { System.IO.File.AppendAllText(System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "wm_debug.log"), DateTime.Now.ToString("HH:mm:ss.fff") + " [LAYER-WM] page=" + page + " 水印框画在 GetOverContent(原文之上) 框数=" + pageBoxes.Count + (opt.StampUnderText ? " ⚠StampUnderText=true章在UNDER会被原文盖住" : "") + Environment.NewLine, System.Text.Encoding.UTF8); } catch { }
                         int pageRotation = pdfReader.GetPageRotation(page);
                         iTextSharp.text.Rectangle pageSize = pdfReader.GetPageSize(page);
                         float pageW = (pageRotation == 90 || pageRotation == 270) ? pageSize.Height : pageSize.Width;
