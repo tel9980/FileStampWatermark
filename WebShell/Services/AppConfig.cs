@@ -1133,6 +1133,8 @@ namespace PDFQFZ.WPF.Services
             public int TextOverlayPos = 0;          // 叠字位置 0=章中心 1=章上方 2=章下方
             public int TextOverlayColorArgb = unchecked((int)0xFFC00000); // 叠字颜色（默认印泥红）
             public int TextOverlaySize = 30;        // 叠字高度占章尺寸的百分比（10~100，默认 30）
+            // V1.1.1.4：原文浮于章上（章衬于文字下）——随章记忆；输出时章画到文字层之下，合同原文压在章图案之上
+            public bool StampUnderText = false; // false=章压字（默认，所见即所得）；true=字压章（扫描件整页图片无文字层时章会看不见）
         }
 
         private static string StampParamSection(string stampFileName)
@@ -1196,6 +1198,7 @@ namespace PDFQFZ.WPF.Services
                 p.TextOverlayPos = ini.GetIniInt(sec, "textOverlayPos", p.TextOverlayPos);
                 p.TextOverlayColorArgb = ini.GetIniInt(sec, "textOverlayColorArgb", p.TextOverlayColorArgb);
                 p.TextOverlaySize = ini.GetIniInt(sec, "textOverlaySize", p.TextOverlaySize);
+                p.StampUnderText = ini.GetIniInt(sec, "stampUnderText", 0) == 1; // V1.1.1.4：原文浮于章上
             }
             catch
             {
@@ -1266,6 +1269,7 @@ namespace PDFQFZ.WPF.Services
                 ini.WriteIniInt(sec, "textOverlayPos", p.TextOverlayPos);
                 ini.WriteIniInt(sec, "textOverlayColorArgb", p.TextOverlayColorArgb);
                 ini.WriteIniInt(sec, "textOverlaySize", p.TextOverlaySize);
+                ini.WriteIniInt(sec, "stampUnderText", p.StampUnderText ? 1 : 0); // V1.1.1.4：原文浮于章上
             }
             catch
             {

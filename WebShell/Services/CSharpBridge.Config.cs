@@ -188,6 +188,8 @@ namespace PDFQFZ.WebShell.Services
                     ["textOverlayPos"] = p.TextOverlayPos,
                     ["textOverlayColorArgb"] = p.TextOverlayColorArgb,
                     ["textOverlaySize"] = p.TextOverlaySize,
+                    // V1.1.1.4：原文浮于章上
+                    ["stampUnderText"] = p.StampUnderText,
                 };
                 return Json(d);
             }
@@ -234,6 +236,8 @@ namespace PDFQFZ.WebShell.Services
                 p.TextOverlayPos = GetInt(d, "textOverlayPos", p.TextOverlayPos);
                 p.TextOverlayColorArgb = GetInt(d, "textOverlayColorArgb", p.TextOverlayColorArgb);
                 p.TextOverlaySize = Math.Max(10, Math.Min(100, GetInt(d, "textOverlaySize", p.TextOverlaySize)));
+                // V1.1.1.4：原文浮于章上（未传的键保持原值，前端全量传）
+                p.StampUnderText = GetBool(d, "stampUnderText", p.StampUnderText);
                 AppConfig.SaveStampParams(stampName.Trim(), p);
                 return "ok";
             }

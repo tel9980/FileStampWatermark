@@ -26,6 +26,9 @@ namespace PDFQFZ.WPF.Services
         public int WzType;                   // 骑缝章位置 0下/1上/2左/3右
         public int WzPercent;                // 骑缝章位置百分比
         public int MaxSplit;                 // 骑缝章最大分割数
+        // V1.1.1.4：原文浮于章上——true 时章画到文字层之下（GetUnderContent），合同原文压在章图案之上；
+        // false=默认章压字（GetOverContent，所见即所得）
+        public bool StampUnderText;
         public StampPlacementCollection Placements;   // 页面章放置集合
         // V2.4.0.96：文字水印框列表（预览放置的水印框快照；null/空 = 不加文字水印，与盖章互不干扰）
         public List<WatermarkBox> Watermarks;
@@ -208,7 +211,8 @@ namespace PDFQFZ.WPF.Services
                         for (int y = 0; y < tmp; y++)
                         {
                             int page = qfzList[startIndex + y];
-                            waterMarkContent = pdfStamper.GetOverContent(page);
+                            // V1.1.1.4：原文浮于章上时骑缝章同样衬于文字层之下
+                            waterMarkContent = opt.StampUnderText ? pdfStamper.GetUnderContent(page) : pdfStamper.GetOverContent(page);
                             int rotation = pdfReader.GetPageRotation(page);
                             iTextSharp.text.Rectangle psize = pdfReader.GetPageSize(page);
                             bool rotLand = (rotation == 90 || rotation == 270);
@@ -293,7 +297,7 @@ namespace PDFQFZ.WPF.Services
                             continue;
                         }
 
-                        waterMarkContent = pdfStamper.GetOverContent(page);
+                        waterMarkContent = opt.StampUnderText ? pdfStamper.GetUnderContent(page) : pdfStamper.GetOverContent(page);
                         int pageRotation = pdfReader.GetPageRotation(page);
                         iTextSharp.text.Rectangle pageSize = pdfReader.GetPageSize(page);
 

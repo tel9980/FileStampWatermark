@@ -361,6 +361,7 @@ namespace PDFQFZ.WebShell.Services
                         RemoveWhite = sp.RemoveWhite, Opacity = sp.Opacity, Rotation = sp.Rotation,
                         OriginalRotationCrop = true, SizeMm = sp.Size, // v2.4.0.76: 固定切边
                         WzType = wzType, WzPercent = wzPercent, MaxSplit = ms, Placements = col,
+                        StampUnderText = sp.StampUnderText, // V1.1.1.4：原文浮于章上（文件夹模式随当前章记忆）
                         Watermarks = wmSnap, // V2.4.0.96：文件夹模式文字水印（PDFWatermark 内按 file 过滤）
                         TextureEnabled = sp.TextureQuality,
                         TextureSeed = NewTextureSeed(),
@@ -511,6 +512,7 @@ namespace PDFQFZ.WebShell.Services
                     WzPercent = wzPercent,
                     MaxSplit = Math.Max(0, maxSplit), // V390：保留 0=自动语义，由 StampEngine 按该文件页数解析（此前 Math.Max(1,0)=1 → 骑缝章 tmp=0 除零）
                     Placements = _stampPlacements,
+                    StampUnderText = spG.StampUnderText, // V1.1.1.4：原文浮于章上（随当前章记忆）
                     // V1.1.1.0：叠字框（IsTextOverlay）始终输出，不受「文字水印」开关闸门；普通水印框仍受 _watermarkEnabled 控制
                     Watermarks = _watermarks.Snapshot().Where(b => b.IsTextOverlay || _watermarkEnabled).ToList(),
                     TextureEnabled = spG.TextureQuality,

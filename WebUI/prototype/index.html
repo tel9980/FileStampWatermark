@@ -733,6 +733,12 @@ button,input,select,textarea{font-family:inherit}
                 <div class="disp-cell"><label>不透明度</label><el-input-number class="tbl-input" v-model="opacity" :min="0" :max="100" controls-position="right" style="width:88px" @change="sealParamNoSealTip"></el-input-number><span class="unit">%</span></div>
                 <div class="disp-cell"><label>旋转</label><el-input-number class="tbl-input" v-model="rotation" :min="-360" :max="360" controls-position="right" style="width:88px" @change="sealParamNoSealTip"></el-input-number><span class="unit">°</span></div>
               </div>
+              <!-- V1.1.1.4：原文浮于章上（章衬于文字层之下；预览仍显示章在上，以输出 PDF 为准；扫描件整页图片无文字层时章会看不见） -->
+              <div v-show="navSectOn('stamp','param') && stampSect.disp" class="row">
+                <el-tooltip content="开启后：输出 PDF 时印章盖在文字层之下，合同原文（委托方/单位名称/日期）浮在章图案之上。预览仍显示章在上，以输出文件为准；扫描件（整页是图片、无文字层）请勿开启，否则章会被图片盖住看不见" placement="top">
+                  <el-checkbox v-model="stampUnderText">印章衬于文字下（原文浮于章上）</el-checkbox>
+                </el-tooltip>
+              </div>
               </div>
               <!-- V1.1.1.0：盖章叠字（章上叠一行文字——公章为透明 PNG，文字会浮在章图案之上；与「文字水印」是两套独立功能） -->
               <div class="sect-block" id="navsect-stamp-textov">
@@ -1521,6 +1527,8 @@ const app = createApp({
       /* V1.0.0.57：模式提示条可拖位置（相对预览区左上角 px；null=默认右上角锚定）+ 印章显示参数无章一次性提示标志 */
       bannerPos:null, _sealParamWarned:false,
       sealSize:44, rotation:0, opacity:100,
+      /* V1.1.1.4：原文浮于章上（随章记忆；默认关=章压字） */
+      stampUnderText:false,
       /* V1.1.1.0：盖章叠字（章上叠一行文字，随章记忆存 config.ini；开关关时完全不影响原有盖章） */
       textOvEnabled:false, textOvText:'', textOvPos:'0', textOvColor:'#C00000', textOvSize:30,
       sealPos:'右', posVal:'50%', segCount:20, seamType:'1',
@@ -2128,6 +2136,7 @@ const app = createApp({
     sealSize(){this.saveStampParams();}, rotation(){this.saveStampParams();},
     opacity(){this.saveStampParams();}, segCount(){this.saveStampParams();}, removeWhite(){this.saveStampParams();},
     tolerance(){this.saveStampParams();}, randEnabled(){this.saveStampParams();},
+    stampUnderText(){this.saveStampParams();},
     'rand.angle'(){this.saveStampParams();}, 'rand.h'(){this.saveStampParams();}, 'rand.v'(){this.saveStampParams();},
     renderEnabled(){this.saveStampParams();},
     'tex.brightness'(){this.saveStampParams();this._texSyncDebounce();}, 'tex.pressure'(){this.saveStampParams();this._texSyncDebounce();},
