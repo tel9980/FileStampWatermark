@@ -1037,11 +1037,13 @@ namespace PDFQFZ.WPF.Services
             // 分布随机（噪声/方向/斑点位置，固定于本章，与参数无关 → 调参时分布稳定）
             Random distRnd = new Random(seed);
             // 强度 = 本章固化系数(0.85~1.15，±15% 浮动) × 参数上限 → 参数主控、章与章微调
-            double amp = kb * brightness / 100.0 * 2.4;                 // 印泥浓淡不均 0~2.4（最大值按 40% 档封顶）
-            double blobLevel = kblob * blob / 100.0;                    // 斑点大小 0~1
-            double gradAmp = kgrad * gradient / 100.0 * 1.0;            // 渐变幅度 0~1.0
-            double whiteLevel = kwhite * white / 100.0;                 // 局部露白随滑块（分布随机）
-            double radialLevel = kradial * radial / 100.0 * 2.0;        // 径向压印 0~2（最大值提高 2 倍）
+            // 纹理强度增强：每项系数应用非线性增强（增强手工感：大参数时增强更明显，小参数时更自然）
+            double amp = Math.Pow(kb * brightness / 100.0, 1.15) * 2.8; // 增强基础 ×2.8，非线性
+            double blobLevel = Math.Pow(kblob * blob / 100.0, 1.3);              // 斑块非线性增强
+            double gradAmp = Math.Pow(kgrad * gradient / 100.0, 1.25) * 1.5;    // 渐变幅度增强
+            double whiteLevel = Math.Pow(kwhite * white / 100.0, 1.2);            // 露白增强
+            double radialLevel = Math.Pow(kradial * radial / 100.0, 1.15) * 2.6;  // 径向增强
+            double castT = Math.Pow(Math.Abs(cast) / 100.0 * kcast, 1.2);         // 色调非线性
             // 色调：参数 -100~+100，0=原色；负=偏冷(玫红/紫红)、正=偏暖(橘红/橙)；
             // 方向全局一致（同一批印泥同一色调）、幅度按章浮动；红章始终是红，只是冷暖微差
             double castT = Math.Abs(cast) / 100.0 * kcast;
