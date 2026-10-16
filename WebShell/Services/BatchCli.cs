@@ -540,6 +540,11 @@ namespace PDFQFZ.WebShell.Services
                 if (stamp.ContainsKey("sizeMm")) { int sz = I(stamp, "sizeMm", 20); if (sz > 0) sp.Size = sz; }
                 if (stamp.ContainsKey("rotation")) sp.Rotation = I(stamp, "rotation", 0);
                 if (stamp.ContainsKey("opacity")) sp.Opacity = I(stamp, "opacity", 100);
+                // V1.3.0：去白（白底 PNG 抠背景）此前只能靠印章已保存配置，任务 JSON 无法控制——
+                // 白底章不抠白会把底下文字整段遮死，"红章压在字上"的效果就出不来。
+                // 补 removeWhite / tolerance 两个字段，使智能体能在任务里显式指定（不填仍沿用该章已保存配置）。
+                if (stamp.ContainsKey("removeWhite")) sp.RemoveWhite = B(stamp, "removeWhite");
+                if (stamp.ContainsKey("tolerance")) sp.Tolerance = I(stamp, "tolerance", 20);
                 if (stamp.ContainsKey("randomParams")) sp.RandomParams = B(stamp, "randomParams");
                 if (stamp.ContainsKey("randomRotation")) sp.RandomRange = I(stamp, "randomRotation", 30); // V1.0.0.80：智能体默认旋转 45→30（用户指令）
                 if (stamp.ContainsKey("randomOffsetXMm")) sp.RandomOffsetXMm = I(stamp, "randomOffsetXMm", 10);

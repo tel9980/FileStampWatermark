@@ -30,6 +30,9 @@ namespace PDFQFZ.WebShell
             PDFQFZ.Library.IniFileHelper.LogAction = PDFQFZ.WebShell.Services.CSharpBridge.WriteLog;
             // V2.4.0.5：旧布局迁移（V2.4.0.4 及更早 config.ini/印章库在 EXE 根目录 → 运行组件\），须先于一切配置读取
             PDFQFZ.WPF.Services.AppConfig.MigrateLegacyLayout();
+            // V1.3.0：印章默认参数一次性迁移（旧默认 不透明度60/去白关 → 新默认 100/开），
+            // 使老配置直接产出"实心红章压在字上"的实盖观感。仅执行一次且判定从严，不覆盖用户手动设置。
+            PDFQFZ.WPF.Services.AppConfig.MigrateStampDefaultsToSolidRed();
             // V1.0.0.14：统一运行日志 app_log.log——启动轮转（保留上次+本次两段），须在崩溃处理器注册前初始化
             AppLog.Init();
             // V374：出厂说明文档（智能体调用手册/用户使用说明）嵌入 EXE，每次启动覆盖写出到软件目录（GUI 与批处理均执行）

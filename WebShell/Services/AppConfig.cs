@@ -152,6 +152,68 @@ namespace PDFQFZ.WPF.Services
             catch { }
         }
 
+        /// <summary>V1.3.0 印章默认参数一次性迁移标记（config.ini [StampDefaults] 节，写 "1" 表示已迁移过）。
+        /// 与 [Stamp] 节分离，避免与既有键冲突。</summary>
+        private const string StampDefaultsSection = "StampDefaults";
+        private const string StampDefaultsSolidRedKey = "solidRedMigrated";
+
+        /// <summary>V1.3.0 前的新章默认不透明度（旧值，仅迁移判定用）。</summary>
+        private const int LegacyStampDefaultOpacity = 60;
+        /// <summary>V1.3.0 起的印章默认不透明度（与 StampParams.Opacity 一致）。</summary>
+        private const int CurrentStampDefaultOpacity = 100;
+
+        /// <summary>
+        /// V1.3.0：印章默认参数一次性迁移。把仍停在**旧默认**（不透明度 60 且去白关闭）的印章参数
+        /// 升到新默认（不透明度 100、去白开），使老配置无需手动调整也能直接产出
+        /// "实心红章压在原有文字上、章身空白处透出底下的字"的实盖观感。
+        /// <para>
+        /// 判定从紧：仅当两个键**都正好等于旧默认**时才改写；用户手动调过任一项
+        /// （如主动把不透明度设成 60、或主动打开过去白）一律跳过，尊重既有配置。
+        /// 从未保存过参数的印章（无 size 键）本就直接走新默认值，不在处理范围。
+        /// </para>
+        /// <para>
+        /// 仅执行一次（[StampDefaults] solidRedMigrated 标记），此后不再改写用户配置——
+        /// 用户事后自行调回低不透明度不会被二次覆盖。迁移失败静默，不阻断启动。
+        /// </para>
+        /// </summary>
+        public static void MigrateStampDefaultsToSolidRed()
+        {
+            try
+            {
+                if (!File.Exists(IniPath)) return;
+                IniFileHelper ini = new IniFileHelper(IniPath);
+                if (ini.ContentValue(StampDefaultsSection, StampDefaultsSolidRedKey) == "1") return;
+
+                int changed = 0;
+                foreach (StampEntry entry in LoadStampEntries())
+                {
+                    // 无 size 键 = 该章参数从未保存过 → 本就走新默认值，无需迁移
+                    if (!HasStampParams(entry.DisplayName)) continue;
+
+                    string sec = StampParamSection(entry.DisplayName);
+                    int opacity = ini.GetIniInt(sec, "opacity", CurrentStampDefaultOpacity);
+                    int removeWhite = ini.GetIniInt(sec, "removeWhite", 1);
+                    if (opacity != LegacyStampDefaultOpacity || removeWhite != 0) continue;
+
+                    ini.WriteIniInt(sec, "opacity", CurrentStampDefaultOpacity);
+                    ini.WriteIniInt(sec, "removeWhite", 1);
+                    changed++;
+                }
+
+                ini.WriteIniString(StampDefaultsSection, StampDefaultsSolidRedKey, "1");
+                if (changed > 0)
+                {
+                    IniFileHelper.LogAction?.Invoke(
+                        "[STAMP-DEFAULTS] V1.3.0 实心红章迁移：已将 " + changed
+                        + " 个印章参数由 不透明度60/去白关 升为 不透明度100/去白开");
+                }
+            }
+            catch
+            {
+                // 迁移失败不影响启动：印章参数保持原样，用户仍可手动调整
+            }
+        }
+
         private static void CopyDirectoryRecursive(string src, string dst)
         {
             Directory.CreateDirectory(dst);
@@ -1110,12 +1172,19 @@ namespace PDFQFZ.WPF.Services
             public int Size = 40;            // 印章尺寸 mm
             public int Rotation = 0;         // 旋转角度
             public int RotationHandle = 0;   // 旋转处理 0=旋转切边 1=不切边
-            public int Opacity = 60;         // 不透明度 %
+            // V1.3.0：默认不透明度 60 → 100。60% 会把章体渲染成淡粉色、黑字整段透过来显得发灰发虚，
+            // 与实盖观感差一截；真实公章是实心印泥。100% 时只有章体着墨、PNG 透明处（alpha=0）
+            // 原样透出下方文字——正是"红章压在字上、黑字在章身下透出"的实盖效果。
+            // 与前端 index.html 的 opacity:100 原始意图对齐（此前 C# 默认 60 是唯一离群值）。
+            public int Opacity = 100;        // 不透明度 %
             public bool RandomParams = false;// 盖章随机旋转
             public int RandomRange = 30;       // 盖章随机旋转角度范围（0~360°，0=不随机旋转）V1.0.0.83：默认 30（用户确认智能体/UI 统一默认值）
             public int RandomOffsetXMm = 10;   // 盖章随机横向位移范围（0~200 mm，0=横向不随机；横向 -X~+X 随机）V1.0.0.83：默认 10
             public int RandomOffsetYMm = 10;   // 盖章随机纵向位移范围（0~200 mm，0=纵向不随机；纵向 -Y~+Y 随机）V1.0.0.83：默认 10
-            public bool RemoveWhite = false; // 去除白色背景
+            // V1.3.0：默认去白 关 → 开。白底公章 PNG 直接盖会把底下的黑字整段遮住，永远做不出
+            // "红章压在字上"的效果；开去白后白底转 alpha=0 才能透字。对已是透明背景的 PNG 无副作用
+            //（WhiteTransparencyHelper.Apply 仅把 RGB 三通道均 > 255-容差 的像素置 alpha=0）。
+            public bool RemoveWhite = true;  // 去除白色背景
             public int Tolerance = 20;       // 容差
             public int MaxSplit = 500;       // 骑缝章最大分割数（随印章记忆，默认500）
             public bool SeamFirstEnabled = true; // V1.1.0.3：骑缝章首页章宽开关（默认开）

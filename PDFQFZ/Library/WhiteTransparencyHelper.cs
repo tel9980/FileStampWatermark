@@ -15,7 +15,21 @@ namespace PDFQFZ.Library
             }
 
             Bitmap bmp = new Bitmap(src.Width, src.Height, PixelFormat.Format32bppArgb);
-            bmp.SetResolution(src.HorizontalResolution, src.VerticalResolution);
+            // V1.3.0：部分 PNG 未写 pHYs 分辨率信息，HorizontalResolution/VerticalResolution 为 0，
+            // 此时 SetResolution(0,0) 抛 ArgumentException，会把整次盖章/骑缝章准备打断。
+            // 去白自 V1.3.0 起为默认开启路径，此处必须自身健壮：分辨率只是 DPI 元数据，
+            // 取不到（或赋值抛错）就跳过设置，不影响抠白结果本身。
+            try
+            {
+                if (src.HorizontalResolution > 0f && src.VerticalResolution > 0f)
+                {
+                    bmp.SetResolution(src.HorizontalResolution, src.VerticalResolution);
+                }
+            }
+            catch
+            {
+                // 分辨率不可用时忽略
+            }
             using (Graphics g = Graphics.FromImage(bmp))
             {
                 g.DrawImage(src, new Rectangle(0, 0, bmp.Width, bmp.Height));

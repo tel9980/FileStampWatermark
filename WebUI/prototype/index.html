@@ -1512,7 +1512,10 @@ const app = createApp({
       seamFirstEnabled:true, seamFirstRatio:20, seamLastEnabled:true, seamLastRatio:20,
       /* v2.4.0.52：骑缝章预览——全量切片布局 + 基准章图（GetSeamPreview） */
       seamAll:[], seamBase:{url:'',w:0,h:0}, _seamTimer:null, _seamSeq:0,
-      removeWhite:false, tolerance:'30',
+      /* V1.3.0：去白默认开（与 C# StampParams.RemoveWhite 默认值对齐）——白底公章 PNG 直接盖会遮住
+         下方的黑字，开去白才能透出文字，达成"红章压在字上"的实盖观感；对已透明 PNG 无副作用。
+         tolerance 用字符串是历史写法（el-input-number 会强转），此处保持不动。 */
+      removeWhite:true, tolerance:'30',
       randEnabled:false, renderEnabled:false,
       /* v2.4.0.40：顶部模块弹窗开关（随机角度位移/盖章渲染 参数编辑） */
       randDlg:false, renderDlg:false, _texSyncTimer:null, _texSyncLast:0, _texSyncLock:false,
