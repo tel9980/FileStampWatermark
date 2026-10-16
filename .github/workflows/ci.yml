@@ -1,0 +1,128 @@
+name: CI — 轻量门禁
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    name: 语法/白名单/结构
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # ──────────────────────────────────────────────
+      # 0. Checkout
+      # ──────────────────────────────────────────────
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # 方便扫历史，虽然主分支只有发布节点
+
+      # ──────────────────────────────────────────────
+      # 1. Node（用于 JS 语法检查）
+      # ──────────────────────────────────────────────
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # ──────────────────────────────────────────────
+      # 2. JS 语法检查（前端零编译期检查，最易炸）
+      #    node --check 所有 bridge.js / modules/*.js
+      #    以及 index.html 里的 <script> 块（单独抽出检查）
+      # ──────────────────────────────────────────────
+      - name: JS 语法检查
+        run: |
+          set -euo pipefail
+          cd WebUI/prototype
+          echo "检查 bridge.js..."
+          node --check bridge.js
+          echo "检查 modules/*.js..."
+          for f in modules/*.js; do
+            node --check "$f" || { echo "FAIL: $f"; exit 1; }
+          done
+          echo "✅ 所有 JS 语法通过"
+
+      # ──────────────────────────────────────────────
+      # 3. HTML 内联脚本语法检查（index.html 里的 <script>）
+      #    这里简单抽取并用 node --check
+      # ──────────────────────────────────────────────
+      - name: HTML 内联脚本语法
+        run: |
+          set -euo pipefail
+          cd WebUI/prototype
+          # 提取 <script>...</script> 里的内容（不含 src= 的外链）用 node --check
+          # （脚本在 .github/scripts/check_inline_js.py，避免 YAML 块内 heredoc 顶格导致 YAML 语法错误）
+          python3 "${GITHUB_WORKSPACE}/.github/scripts/check_inline_js.py" index.html
+
+      # ──────────────────────────────────────────────
+      # 4. 白名单守卫（AGENTS.md 铁律：防公章/印章/交付版本/备份/.exe 入库）
+      #    扫描暂存区+已跟踪文件（PR 时扫 diff，push 时扫 HEAD）
+      # ──────────────────────────────────────────────
+      - name: 白名单守卫
+        run: |
+          set -euo pipefail
+          # 黑名单模式（正则，忽略大小写）
+          # 注意：印章/公章/seal 只拦图片资源（*.png/jpg/bmp/ico 等），
+          # 代码文件如 SealLib.cs / sealLib.js / list_seals.py 允许入库，此前 broad 写法会误伤。
+          BLACKLIST=(
+            '(公章|印章|seal)[^/]*\.(png|jpg|jpeg|bmp|gif|ico)$'
+            '交付版本'
+            '备份文件夹|备份[^a-zA-Z]'
+            'E2E[\\/]'
+            'PDFQFZ\.Tests[\\/]'
+            '工具脚本[\\/]'
+            '输出记录.*\.md$'
+            'Web交付版本[\\/]'
+            '\.exe$'
+            'WebShell/Assets/公章\.png$'
+            'app_icon_raw\.png$'
+            '运行组件[\\/]'
+            '\.pdb$'
+            'obj[\\/]'
+            'bin[\\/]'
+            'packages[\\/]'
+            '\.user$'
+            '\.suo$'
+            '_ReSharper'
+            '\.vs[\\/]'
+          )
+          # 组装 egrep pattern
+          PAT=$(IFS='|'; echo "${BLACKLIST[*]}")
+          echo "扫描模式: $PAT"
+          # 取扫描集合：PR 用 diff（base->HEAD），push 用 HEAD 全量
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            # 获取 base sha
+            BASE="${{ github.event.pull_request.base.sha }}"
+            FILES=$(git diff --name-only "$BASE"..HEAD 2>/dev/null || git diff --name-only "$BASE" 2>/dev/null || echo "")
+          else
+            FILES=$(git ls-files)
+          fi
+          if [[ -z "$FILES" ]]; then
+            echo "无文件变动，跳过"
+            exit 0
+          fi
+          # 逐文件检查
+          VIOL=0
+          for f in $FILES; do
+            if [[ -f "$f" ]]; then
+              # .gitignore 已忽略的文件 git ls-files 不会出现，但 diff 可能出现已删除文件
+              if echo "$f" | grep -qiE "$PAT"; then
+                echo "🚫 违规文件: $f"
+                VIOL=1
+              fi
+            fi
+          done
+          if [[ $VIOL -eq 1 ]]; then
+            echo "❌ 白名单守卫失败：发现禁止入库文件"
+            echo "请参考 AGENTS.md 第 5-11 行白名单/黑名单规则"
+            exit 1
+          fi
+          echo "✅ 白名单守卫通过"
+
+      # 5. 结构完整性：桥方法两端对齐（脚本见 .github/scripts/check_bridge_align.sh，
+      #    内置内部/预留方法豁免名单）
+      - name: 桥方法两端对齐
+        run: |
+          set -euo pipefail
+          bash "${GITHUB_WORKSPACE}/.github/scripts/check_bridge_align.sh"

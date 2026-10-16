@@ -1,8 +1,11 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using PDFQFZ.Library;
 
 namespace PDFQFZ.WPF.Services
@@ -28,20 +31,25 @@ namespace PDFQFZ.WPF.Services
                         .ToList();
                     int total = targets.Count;
                     int done = 0;
-                    foreach (var fileInfo in targets)
+                    var failures = new ConcurrentBag<string>();
+
+                    // 并行度：CPU 核心数，避免过度并发争抢磁盘/内存
+                    int maxParallel = Math.Max(1, Environment.ProcessorCount);
+                    var options = new ParallelOptions { MaxDegreeOfParallelism = maxParallel };
+
+                    Parallel.ForEach(targets, options, (fileInfo, state, index) =>
                     {
-                        done++;
+                        int curDone = Interlocked.Increment(ref done);
                         string source = fileInfo.FullName;
                         string output = OutputFileNamingPolicy.GetNextOutputPath(request.OutDir, source, request.NamingOptions);
-                        onLog(string.Format("正在处理第 {0}/{1} 个文件：《{2}》", done, total, fileInfo.Name), false); // V1.0.0.79：文件名《》包裹（与 batch-progress 前端日志一致）
-                        int curDone = done; int curTotal = total; string curName = fileInfo.Name; /* V1.0.0.78：写盘/图片进度闭包引用（foreach 变量在 lambda 内延迟求值，需局部副本） */
+                        onLog(string.Format("正在处理第 {0}/{1} 个文件：《{2}》", curDone, total, fileInfo.Name), false);
                         bool success = StampEngine.PDFWatermark(request.Options, seamImage, xzbl,
                             source, output, source,
                             msg => onLog(msg, false),
                             (d, t) => onProgress(string.Format("正在盖章中：已完成 {0}/{1} 页（{2}%），文件：《{3}》",
-                                d, t, t > 0 ? (int)Math.Round(100.0 * d / t) : 0, fileInfo.Name)), // V1.0.0.78：文件名《》包裹
-                            active => { if (active) onProgress(string.Format("文件生成中：第 {0}/{1} 个文件，请勿关闭软件", curDone, curTotal)); }); // V1.0.0.79：去掉文本省略号（动态点点由前端动画），文件夹模式带文件序号（方案B）
-                        // V1.0.0.47：输出格式多选分流（pdf/jpg/png 可同选各输出各的；图片文件夹名带格式标识）
+                                d, t, t > 0 ? (int)Math.Round(100.0 * d / t) : 0, fileInfo.Name)),
+                            active => { if (active) onProgress(string.Format("文件生成中：第 {0}/{1} 个文件，请勿关闭软件", curDone, total)); });
+
                         var fmtsDir = StampEngine.ParseOutFormats(request.OutFormat);
                         bool wantPdfDir = fmtsDir.Contains("pdf");
                         int imgOutCount = -1; var imgLogsDir = new List<string>();
@@ -52,7 +60,7 @@ namespace PDFQFZ.WPF.Services
                             {
                                 if (fmt == "pdf") continue;
                                 var imgs = StampEngine.PDFToImages(output, request.OutDir, Path.GetFileNameWithoutExtension(output), request.QualityDpi, fmt,
-                                    (d, t) => onProgress(string.Format("正在输出图片：已完成 {0}/{1} 张（{2}%），文件：《{3}》", d, t, t > 0 ? (int)Math.Round(100.0 * d / t) : 0, curName))); // V1.0.0.78：图片输出逐张百分比（真实可算）+ 文件名《》包裹
+                                    (d, t) => onProgress(string.Format("正在输出图片：已完成 {0}/{1} 张（{2}%），文件：《{3}》", d, t, t > 0 ? (int)Math.Round(100.0 * d / t) : 0, fileInfo.Name)));
                                 if (imgs.Count > 0) { imgOutCount = (imgOutCount < 0 ? 0 : imgOutCount) + imgs.Count; imgLogsDir.Add(string.Format("已输出 {0} 张 {1} 图片（文件夹：{2}）", imgs.Count, fmt.ToUpperInvariant(), Path.GetFileNameWithoutExtension(output) + "_" + fmt.ToUpperInvariant())); }
                             }
                             if (imgOutCount >= 0 && !wantPdfDir) { try { File.Delete(output); } catch { } }
@@ -60,14 +68,16 @@ namespace PDFQFZ.WPF.Services
                         if (success)
                         {
                             if (wantPdfDir) onLog(OutputFileNamingPolicy.BuildSuccessMessage(fileInfo.Name, output), false);
-                            foreach (var lg in imgLogsDir) onLog(string.Format("成功！《{0}》{1}", fileInfo.Name, lg), false); // V1.0.0.78：文件名《》统一
+                            foreach (var lg in imgLogsDir) onLog(string.Format("成功！《{0}》{1}", fileInfo.Name, lg), false);
                         }
                         else
                         {
-                            hasFailures = true;
-                            onLog("失败！《" + fileInfo.Name + "》盖章失败！", true); // V1.0.0.79：文件名《》统一（原“”中文引号）
+                            failures.Add(fileInfo.Name);
+                            onLog("失败！《" + fileInfo.Name + "》盖章失败！", true);
                         }
-                    }
+                    });
+
+                    return failures.Count > 0;
                 }
                 else
                 {

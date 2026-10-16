@@ -23,6 +23,72 @@ window.PdfqModules.stampActions = {
       this.opHint=v?'盖章渲染已启用：模拟真实盖章效果；点击名称按钮调节参数':'盖章渲染已关闭';
       this.addLog(v?'盖章渲染已启用':'盖章渲染已关闭');
     },
+    /* ---- V1.1.1.0：盖章叠字（章上叠一行文字）---- */
+    /* 开关：开启即展开参数区并记忆；文字为空时只提示不拦截（后端同样按空文字=不叠处理） */
+    /* ---- V1.1.1.6：撤销上次手动盖章 ---- */
+    undoManualStamp(){
+      if(!this.pdfLoaded){ this.opHint='请先加载 PDF 文件'; return; }
+      const page = parseInt(this.curPage) || 1;
+      if(window.Bridge && window.Bridge.invoke){
+        window.Bridge.invoke('UndoManualStamp', page).then(function(json){
+          try{
+            const r = JSON.parse(json);
+            if(r.ok && r.undone >= 0){ window.__vm.opHint = '已撤回最近手动章（id='+r.undone+'）'; window.__vm.addLog('已撤回最近手动章（id='+r.undone+'）','ok'); window.__vm.refreshPageStamps(); if(typeof window.__vm.refreshPageWatermarks==='function'){ window.__vm.refreshPageWatermarks(); } }
+            else { window.__vm.opHint = r.reason || '无可撤回的手动章'; window.__vm.addLog(r.reason || '无可撤回的手动章', r.ok===false); }
+          }catch(e){ window.__vm.opHint='撤销解析失败'; window.__vm.addLog('撤销解析失败：'+String(json),true); }
+        }, function(e){ window.__vm.opHint='撤销失败：'+e.message; window.__vm.addLog('撤销失败：'+e.message,true); });
+      }
+    },
+    onTextOvEnable(v){
+      if(v){ this.stampSect.textov=true; this.saveTextOvParams(); }
+      this.opHint=v?'盖章叠字已启用：每次手动盖章都会在章上叠一行文字（公章需为透明 PNG）':'盖章叠字已关闭';
+      this.addLog(v?'盖章叠字已启用':'盖章叠字已关闭');
+    },
+    /* 手动盖章统一入口：开启叠字且填了文字 → 走 AddManualStampWithText（后端按章记忆叠字）；
+       否则走原 AddManualStamp（逐位不变，零回归）。返回 Promise<string>（JSON 文本）。 */
+    invokeManualStamp(x,y,page){
+      const useOv = !!(this.textOvEnabled && String(this.textOvText||'').trim());
+      /* 壳内才探测新方法：纯浏览器预览 window.Bridge=null，调用方本就不可达 */
+      if(useOv && window.Bridge && window.Bridge.invoke && window.CSharpBridge
+         && typeof window.CSharpBridge.AddManualStampWithText==='function'){
+        return window.Bridge.invoke('AddManualStampWithText',x,y,page);
+      }
+      /* 未开叠字 / 老壳无新桥方法 → 原路普通盖章（缺方法也不影响盖章） */
+      return window.Bridge.invoke('AddManualStamp',x,y,page);
+    },
+    /* 盖章结果统一处理：章成功即刷新；顺带打叠字日志（叠字失败不覆盖章成功的事实） */
+    afterManualStamp(r,page,tag){
+      if(r && r.ok){
+        this.addLog('第 '+page+' 页已放置印章'+(tag?('（'+tag+'）'):''),'ok');
+        let ovOk=false;
+        if(r.textOverlay && r.textOverlay.ok){ ovOk=true; this.addLog('第 '+page+' 页已叠字「'+String(r.textOverlay.text||'')+'」','ok'); }
+        else if(r.textOverlay && r.textOverlay.error){ this.addLog('第 '+page+' 页叠字失败：'+r.textOverlay.error,true); }
+        this.refreshPageStamps();
+        /* V1.1.1.0：后端新建了水印框 → 必须刷新水印列表，否则预览里看不到刚叠的字（只刷章不刷水印） */
+        if(ovOk && typeof this.refreshPageWatermarks==='function'){ this.refreshPageWatermarks(); }
+      } else { this.opHint=(r&&r.error)||'盖章失败'; this.addLog((r&&r.error)||'盖章失败',true); }
+    },
+    /* 叠字参数写入 config.ini（随当前章记忆）；与 saveStampParams 同一套防抖节流，避免连续输入频繁写盘 */
+    saveTextOvParams(){
+      if(this._shellLoading || !window.Bridge || !window.Bridge.invoke) return;
+      const p={
+        textOverlayEnabled: !!this.textOvEnabled,
+        textOverlayText: String(this.textOvText||''),
+        textOverlayPos: parseInt(this.textOvPos)||0,
+        textOverlayColorArgb: this.wmHexToArgb ? this.wmHexToArgb(this.textOvColor) : (0xFF000000|(parseInt(String(this.textOvColor||'#000000').replace('#',''),16)||0)),
+        textOverlaySize: parseInt(this.textOvSize)||30,
+      };
+      this._textOvPending=p;
+      if(this._textOvTimer){ clearTimeout(this._textOvTimer); }
+      this._textOvTimer=setTimeout(()=>this._flushTextOvParams(),200);
+    },
+    _flushTextOvParams(){
+      if(this._textOvTimer){ clearTimeout(this._textOvTimer); this._textOvTimer=null; }
+      if(!this._textOvPending){ return; }
+      const p=this._textOvPending; this._textOvPending=null;
+      if(this._shellLoading || !window.Bridge || !window.Bridge.invoke) return;
+      window.Bridge.invoke('SetStampParams', this.curSeal, JSON.stringify(p)).catch(()=>{});
+    },
     /* ---- v2.4.0.41：浮动面板（非模态）打开/拖拽/位置记忆（相对左栏坐标，localStorage） ---- */
     onWhiteEnable(v){
       if(v) this.stampSect.white=true;
@@ -375,14 +441,14 @@ window.PdfqModules.stampActions = {
           },function(err){ self.opHint='范围盖章失败：'+err.message; self.addLog('范围盖章失败：'+err.message,true); });
         } else {
           // 范围内非结束页：单页盖章（V2.4.0.58：盖章成功后退出范围模式——"盖章算退出"）
-          window.Bridge.invoke('AddManualStamp',x,y,page).then(function(json){
-            const r=JSON.parse(json); if(r.ok){ self.rangeActive=false; self.addLog('第 '+page+' 页已放置印章','ok'); self.refreshPageStamps(); } else { self.opHint=r.error||'盖章失败'; self.addLog(r.error||'盖章失败',true); }
+          self.invokeManualStamp(x,y,page).then(function(json){
+              const r=JSON.parse(json); if(r.ok){ self.rangeActive=false; self.addLog('第 '+page+' 页已放置印章','ok'); if(r.textOverlay&&r.textOverlay.ok){ self.addLog('第 '+page+' 页已叠字「'+String(r.textOverlay.text||'')+'」','ok'); if(typeof self.refreshPageWatermarks==='function'){ self.refreshPageWatermarks(); } } self.refreshPageStamps(); } else { self.opHint=r.error||'盖章失败'; self.addLog(r.error||'盖章失败',true); }
           },function(err){ self.opHint='盖章失败：'+err.message; self.addLog('盖章失败：'+err.message,true); });
         }
         return;
       }
-      window.Bridge.invoke('AddManualStamp',x,y,page).then(function(json){
-        const r=JSON.parse(json); if(r.ok){ self.addLog('第 '+page+' 页已放置印章','ok'); self.refreshPageStamps(); } else { self.opHint=r.error||'盖章失败'; self.addLog(r.error||'盖章失败',true); }
+      self.invokeManualStamp(x,y,page).then(function(json){
+          const r=JSON.parse(json); if(r.ok){ self.afterManualStamp(r,page); } else { self.opHint=r.error||'盖章失败'; self.addLog(r.error||'盖章失败',true); }
       },function(err){ self.opHint='盖章失败：'+err.message; self.addLog('盖章失败：'+err.message,true); });
     },
     /* v2.4.0.52：拖拽已盖章实时移动——位移≥4px 判定拖拽（实时改本地 x/y，mouseup 调桥 MoveStamp 持久化）；
@@ -470,9 +536,9 @@ window.PdfqModules.stampActions = {
             cy=((dispH-h)*s.y+oyPx+h/2)/dispH;
           }
           cx=Math.max(0,Math.min(1,cx)); cy=Math.max(0,Math.min(1,cy));
-          window.Bridge.invoke('AddManualStamp', Number(cx.toFixed(4)), Number(cy.toFixed(4)), page).then(function(json){
+          self.invokeManualStamp(Number(cx.toFixed(4)), Number(cy.toFixed(4)), page).then(function(json){
             const r=JSON.parse(json);
-            if(r.ok){ self.addLog('第 '+page+' 页已放置印章','ok'); self.refreshPageStamps(); }
+            if(r.ok){ self.afterManualStamp(r,page); }
             else { self.opHint=r.error||'盖章失败'; self.addLog(r.error||'盖章失败',true); }
           },function(err){ self.opHint='盖章失败：'+err.message; self.addLog('盖章失败：'+err.message,true); });
         }

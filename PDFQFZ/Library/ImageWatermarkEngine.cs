@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
@@ -6,6 +7,8 @@ using System.Drawing.Imaging;
 using System.Drawing.Text;
 using System.IO;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using iTextSharp.text.pdf;
 
 namespace PDFQFZ.Library
@@ -54,33 +57,45 @@ namespace PDFQFZ.Library
             Action<string> log)
         {
             var result = new BatchResult { Total = files.Count };
-            for (int i = 0; i < files.Count; i++)
+            var failures = new ConcurrentBag<string>();
+            var outputs = new ConcurrentBag<string>();
+            int done = 0, skipped = 0;
+
+            // 并行度：CPU 核心数，避免过度并发争抢磁盘/内存
+            int maxParallel = Math.Max(1, Environment.ProcessorCount);
+            var options = new ParallelOptions { MaxDegreeOfParallelism = maxParallel };
+
+            Parallel.ForEach(files, options, (file, state, index) =>
             {
-                string file = files[i];
                 string name = Path.GetFileName(file);
+                int curDone = Interlocked.Increment(ref done);
                 try
                 {
                     var boxes = boxesByFile != null ? boxesByFile(file) : null;
                     if (boxes == null || boxes.Count == 0)
                     {
-                        result.Skipped++;
+                        Interlocked.Increment(ref skipped);
                         if (log != null) log("跳过（无水印框）：" + name);
-                        if (progress != null) progress(i + 1, files.Count, name);
-                        continue;
+                        if (progress != null) progress(curDone, files.Count, name);
+                        return;
                     }
                     string outPath = ApplyOne(file, boxes, outputFolder, naming);
-                    result.Done++;
-                    result.Outputs.Add(outPath);
+                    outputs.Add(outPath);
                     if (log != null) log("完成：" + name + " → " + Path.GetFileName(outPath));
                 }
                 catch (Exception ex)
                 {
-                    result.Failed++;
-                    result.Failures.Add(name + "：" + ex.Message);
+                    failures.Add(name + "：" + ex.Message);
                     if (log != null) log("失败：" + name + "（" + ex.Message + "）");
                 }
-                if (progress != null) progress(i + 1, files.Count, name);
-            }
+                if (progress != null) progress(curDone, files.Count, name);
+            });
+
+            result.Done = done - skipped;
+            result.Skipped = skipped;
+            result.Failed = failures.Count;
+            result.Outputs.AddRange(outputs);
+            result.Failures.AddRange(failures);
             return result;
         }
 

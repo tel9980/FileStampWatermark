@@ -733,6 +733,46 @@ button,input,select,textarea{font-family:inherit}
                 <div class="disp-cell"><label>不透明度</label><el-input-number class="tbl-input" v-model="opacity" :min="0" :max="100" controls-position="right" style="width:88px" @change="sealParamNoSealTip"></el-input-number><span class="unit">%</span></div>
                 <div class="disp-cell"><label>旋转</label><el-input-number class="tbl-input" v-model="rotation" :min="-360" :max="360" controls-position="right" style="width:88px" @change="sealParamNoSealTip"></el-input-number><span class="unit">°</span></div>
               </div>
+              <!-- V1.1.1.4：原文浮于章上（章衬于文字层之下）；V1.1.1.6：修正整页图片误判——带透明通道(SMask)或实际未铺满页面的大图不再触发回落，Word/合同导出件不再被当扫描件而静默改成章压字；真正扫描件（1:1 铺满且不透明）仍回落保证章可见 -->
+              <div v-show="navSectOn('stamp','param') && stampSect.disp" class="row">
+                <el-tooltip content="开启后：输出 PDF 时印章盖在文字层之下，合同原文（委托方/单位名称/日期）浮在章图案之上。预览仍显示章在上，以输出文件为准；扫描件（整页是图片、无文字层）请勿开启，否则章会被图片盖住看不见——若误开，软件会自动回落章压字并在日志提示" placement="top">
+                  <el-checkbox v-model="stampUnderText">印章衬于文字下（原文浮于章上，V1.3.0 起默认开启）</el-checkbox>
+                </el-tooltip>
+              </div>
+              </div>
+              <!-- V1.1.1.0：盖章叠字（章上叠一行文字——公章为透明 PNG，文字会浮在章图案之上；与「文字水印」是两套独立功能） -->
+              <div class="sect-block" id="navsect-stamp-textov">
+              <div class="sect-title" v-show="navSectOn('stamp','textov')" @click="toggleSect('stampSect','textov')"><rei-arrow class="sect-arrow" :deg="stampSect.textov?180:0"></rei-arrow>盖章叠字</div>
+              <div v-show="navSectOn('stamp','textov') && stampSect.textov" class="row">
+                <el-tooltip content="开启后：每次手动盖章，都会在章上顺带叠一行文字（如经办人、日期）。公章需为透明背景 PNG，文字才能清晰浮在章图案上" placement="top">
+                  <el-checkbox v-model="textOvEnabled" @change="onTextOvEnable">盖章时叠一行文字</el-checkbox>
+                </el-tooltip>
+              </div>
+              <div v-show="navSectOn('stamp','textov') && stampSect.textov && textOvEnabled" class="row" style="flex-wrap:wrap;gap:8px 0">
+                <div class="disp-cell"><label>文字</label><el-input v-model="textOvText" placeholder="如：经办人 张三" style="width:150px" maxlength="50" @input="saveTextOvParams"></el-input></div>
+                <div class="disp-cell"><label>位置</label>
+                  <el-select v-model="textOvPos" style="width:88px" @change="saveTextOvParams">
+                    <el-tooltip content="文字压在章图案正中间" placement="top"><el-option label="章中心" value="0"></el-option></el-tooltip>
+                    <el-tooltip content="文字在章的上边缘附近" placement="top"><el-option label="章上方" value="1"></el-option></el-tooltip>
+                    <el-tooltip content="文字在章的下边缘附近" placement="top"><el-option label="章下方" value="2"></el-option></el-tooltip>
+                  </el-select>
+                </div>
+                <div class="disp-cell"><label>字号</label><el-input-number class="tbl-input" v-model="textOvSize" :min="10" :max="100" controls-position="right" style="width:88px" @change="saveTextOvParams"></el-input-number><span class="unit">%</span></div>
+                <div class="disp-cell"><label>颜色</label>
+                  <el-select v-model="textOvColor" style="width:88px" @change="saveTextOvParams">
+                    <el-option v-for="c in wmQuickColors" :key="c.v" :value="c.v" :label="c.n">
+                      <span class="wm-opt-color"><span class="wm-opt-dot" :style="{background:c.v}"></span>{{ c.n }}</span>
+                    </el-option>
+                  </el-select>
+                </div>
+              </div>
+              <div v-show="navSectOn('stamp','textov') && stampSect.textov && textOvEnabled" class="row">
+                <span style="font-size:12px;color:var(--text-3);line-height:1.5">叠字只对「手动点击盖章」生效；按文字盖章、范围批量盖章不加。叠出来的字可在「文字水印」页里继续改。</span>
+              </div>
+              <!-- V1.1.1.6：印章库去重检测提示（财务场景保障：同一章不同名/同名不同图会混乱记忆与输出命名） -->
+              <div v-show="navSectOn('stamp','param') && stampSect.disp" class="row" style="margin-top:2px">
+                <span v-if="sealDupTip" style="font-size:11px;color:#C85A17;line-height:1.4">{{ sealDupTip }}</span>
+              </div>
               </div>
               <!-- v2.4.0.40：随机角度位移/盖章渲染 已移至左栏顶部（开关+按钮弹窗），原参数区块随迁，此处移除 -->
               <!-- 分区2 骑缝章（二级标题，可折叠） -->
@@ -1061,6 +1101,9 @@ button,input,select,textarea{font-family:inherit}
         <div class="bottom-area">
           <div class="gen-card">
             <el-button class="btn-generate" style="height:34px" :loading="generating || imgBusy" @click="handleGenerate()">生成结果文件</el-button>
+            <el-tooltip content="撤销上一次手动盖章（仅撤回手动章，不影响批量/范围/按文字章）" placement="top">
+              <el-button :disabled="!pdfLoaded" style="margin-left:8px;height:34px" @click="undoManualStamp()">撤销上次盖章</el-button>
+            </el-tooltip>
           </div>
           <div class="op-hint">
             <div class="op-bar"><span v-html="opHintHtml()"></span><span v-if="genMerging" class="gen-dots"><i></i><i></i><i></i></span></div>
@@ -1480,7 +1523,7 @@ const app = createApp({
       navState:{file:{on:true,subs:null}, stamp:{on:true,subs:{param:true,ridge:true,white:false}}, batch:{on:true,subs:{range:true,text:false,folder:false}}, watermark:{on:false,subs:null}, output:{on:true,subs:{mode:true,dpi:true,name:true}}},
       navGroups:[
         {key:'file', short:'源', title:'源文件', subs:null},
-        {key:'stamp', short:'印', title:'印章参数', subs:[{key:'param',text:'参数',title:'显示参数'},{key:'ridge',text:'骑缝',title:'骑缝章'},{key:'white',text:'去白',title:'图章去白',sw:'removeWhite'}]},
+        {key:'stamp', short:'印', title:'印章参数', subs:[{key:'param',text:'参数',title:'显示参数'},{key:'ridge',text:'骑缝',title:'骑缝章'},{key:'white',text:'去白',title:'图章去白',sw:'removeWhite'},{key:'textov',text:'叠字',title:'盖章叠字'}]},
         {key:'batch', short:'批', title:'批量盖章', subs:[{key:'range',text:'范围',title:'指定范围页'},{key:'text',text:'文字',title:'按文字批量',sw:'textForce'},{key:'folder',text:'批量',title:'批处理文件',sw:'batchForce'}]},
         {key:'watermark', short:'文', title:'文字水印', subs:null, sw:'wmEditMode'}, /* V1.0.0.55：卡体显示=编辑中（退出水印模式即整卡消失）；图片模式特判 true 在前 */
         {key:'output', short:'出', title:'输出设置', subs:[{key:'mode',text:'模式',title:'输出模式'},{key:'dpi',text:'dpi',title:'输出 DPI'},{key:'name',text:'命名',title:'输出文件名后缀'}]},
@@ -1496,8 +1539,9 @@ const app = createApp({
       imgFitW:0, imgPageInput:'1', imgOutDir:'', imgBusy:false,
       wmBoxesImg:[], dlgImgMixed:false, imgMixedInfo:null,
       wmWrapResult:{},  /* V297: C# 算的换行结果（key=b.id，value=换行后文本） */
+      sealDupTip:'',      /* V1.1.1.6：印章库去重检测提示（财务印章准确性保障，不阻断，只提示日志+前端） */
       /* 印章参数卡二级分区折叠状态（显示参数/骑缝章/图章去白；v2.4.0.40：随机角度/盖章渲染已迁顶部弹窗，不再折叠） */
-      stampSect:{disp:true, ridge:true, white:true},
+      stampSect:{disp:true, ridge:true, white:true, textov:true},
       batchSect:{range:true, text:false, folder:false},
       /* V2.4.0.53 文件夹批量处理（简化版 V1）状态 */
       batchRange:'0', batchStart:1, batchEnd:8, batchX:50, batchY:80, batchForce:false, textForce:false,
@@ -1507,6 +1551,11 @@ const app = createApp({
       /* V1.0.0.57：模式提示条可拖位置（相对预览区左上角 px；null=默认右上角锚定）+ 印章显示参数无章一次性提示标志 */
       bannerPos:null, _sealParamWarned:false,
       sealSize:44, rotation:0, opacity:100,
+      /* V1.1.1.4：原文浮于章上（随章记忆；默认关=章压字） */
+      /* V1.3.0：与 C# StampParams.StampUnderText 默认值对齐（默认「字压章」，黑字压在红章之上）。 */
+      stampUnderText:true,
+      /* V1.1.1.0：盖章叠字（章上叠一行文字，随章记忆存 config.ini；开关关时完全不影响原有盖章） */
+      textOvEnabled:false, textOvText:'', textOvPos:'0', textOvColor:'#C00000', textOvSize:30,
       sealPos:'右', posVal:'50%', segCount:20, seamType:'1',
       /* V1.1.0.3：骑缝章首/尾页章宽可配置（开关+占比%默认15） V1.1.0.4：默认20、范围5~45 */
       seamFirstEnabled:true, seamFirstRatio:20, seamLastEnabled:true, seamLastRatio:20,
@@ -2119,11 +2168,23 @@ const app = createApp({
     sealSize(){this.saveStampParams();}, rotation(){this.saveStampParams();},
     opacity(){this.saveStampParams();}, segCount(){this.saveStampParams();}, removeWhite(){this.saveStampParams();},
     tolerance(){this.saveStampParams();}, randEnabled(){this.saveStampParams();},
+    stampUnderText(){this.saveStampParams();},
     'rand.angle'(){this.saveStampParams();}, 'rand.h'(){this.saveStampParams();}, 'rand.v'(){this.saveStampParams();},
     renderEnabled(){this.saveStampParams();},
     'tex.brightness'(){this.saveStampParams();this._texSyncDebounce();}, 'tex.pressure'(){this.saveStampParams();this._texSyncDebounce();},
     'tex.blob'(){ if(this.tex.blob<=0&&this.tex.blobSize!==0){ this.tex.blobSize=0; } this.saveStampParams();this._texSyncDebounce(); }, 'tex.blobSize'(){this.saveStampParams();this._texSyncDebounce();},
     'tex.gradient'(){this.saveStampParams();this._texSyncDebounce();}, 'tex.hue'(){this.saveStampParams();this._texSyncDebounce();}, 'tex.white'(){this.saveStampParams();this._texSyncDebounce();},
+    undoManualStamp(){
+      if(!window.Bridge || !this.pdfLoaded){ this.opHint='请先加载 PDF 文件'; return; }
+      const page = parseInt(this.curPage) || 1;
+      window.Bridge.invoke('UndoManualStamp', page).then(function(json){
+        try{
+          const r = JSON.parse(json);
+          if(r.ok && r.undone && r.undone >= 0){ window.__vm.opHint = '已撤回最近手动章（id='+r.undone+'）'; window.__vm.addLog('已撤回最近手动章（id='+r.undone+'）','ok'); window.__vm.refreshPageStamps(); if(typeof window.__vm.refreshPageWatermarks==='function') window.__vm.refreshPageWatermarks(); }
+          else { window.__vm.opHint = r.reason || '无可撤回的手动章'; window.__vm.addLog(r.reason || '无可撤回的手动章', r.ok===false); }
+        }catch(e){ window.__vm.opHint = '撤销解析失败'; window.__vm.addLog('撤销解析失败:'+String(json), true); }
+      }, function(e){ window.__vm.opHint='撤销失败：'+e.message; window.__vm.addLog('撤销失败：'+e.message, true); });
+    },
     preset(){this.saveStampParams();},
 
     /* 切换印章：重新拉取该章参数；骑缝章预览基准图/尺寸随之变化 */
@@ -2211,6 +2272,22 @@ const app = createApp({
 
     this.loadFromShell();
     this.loadStamps();
+    // V1.1.1.6：印章库去重检测（启动时异步检查，不阻断主流程；重复项提示写入前端 + 系统日志）
+    if(window.Bridge && window.Bridge.invoke){
+      window.Bridge.invoke('CheckSealLibrary').then(function(json){
+        try{
+          const r = JSON.parse(json);
+          if(r.ok && r.duplicates && r.duplicates.length > 0){
+            const self = window.__vm || { opHint:'', addLog:function(m,err){ console.log('[SEAL-DUP]', m); } };
+            const tip = '印章库检测到 '+r.duplicates.length+' 项重复印章（同一文件不同名称/同名不同文件），详见系统日志；建议整理印章库避免记忆混乱';
+            if(self && typeof self.$nextTick === 'function'){
+              self.$nextTick(function(){ self.sealDupTip = tip; });
+            } else { self.sealDupTip = tip; }
+            if(typeof self.addLog === 'function') self.addLog(tip, true);
+          }
+        }catch(e){ console.warn('[SEAL-DUP] 解析失败', e); }
+      }, function(e){ console.warn('[SEAL-DUP] 调用失败', e); });
+    }
     // 按窗口宽度初始化左栏宽度：窄窗口（<1200px）用最小可用宽度，宽窗口默认 680（用户规范：800*600~2560*1440 布局不乱）
     const _mx=Math.min(760,window.innerWidth-10-620-8); this.leftWidth=Math.max(Math.min(this.leftMinW,_mx),Math.min(680,_mx)); // v2.4.0.36：启动按内容宽约束（左栏最小600；窗口最小1226时内容1210=600+10+600）
     // v2.4.0.36：测量左栏最小宽度（渲染完成/字体就绪/窗口变化时刷新）

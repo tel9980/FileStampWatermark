@@ -155,7 +155,7 @@ namespace PDFQFZ.WPF.Services
         /// <summary>V1.3.0 印章默认参数一次性迁移标记（config.ini [StampDefaults] 节，写 "1" 表示已迁移过）。
         /// 与 [Stamp] 节分离，避免与既有键冲突。</summary>
         private const string StampDefaultsSection = "StampDefaults";
-        private const string StampDefaultsSolidRedKey = "solidRedMigrated";
+        private const string StampDefaultsMigratedKey = "v13DefaultsMigrated";
 
         /// <summary>V1.3.0 前的新章默认不透明度（旧值，仅迁移判定用）。</summary>
         private const int LegacyStampDefaultOpacity = 60;
@@ -163,49 +163,66 @@ namespace PDFQFZ.WPF.Services
         private const int CurrentStampDefaultOpacity = 100;
 
         /// <summary>
-        /// V1.3.0：印章默认参数一次性迁移。把仍停在**旧默认**（不透明度 60 且去白关闭）的印章参数
-        /// 升到新默认（不透明度 100、去白开），使老配置无需手动调整也能直接产出
-        /// "实心红章压在原有文字上、章身空白处透出底下的字"的实盖观感。
+        /// V1.3.0：印章默认参数一次性迁移。把仍停在**旧默认**的印章参数升到新默认，共三项：
+        /// <list type="bullet">
+        /// <item>不透明度 60 → 100：实心红章，60% 是淡粉、黑字整段透过来发灰发虚。</item>
+        /// <item>去白 关 → 开：白底公章 PNG 不抠白会把底下内容遮死；对已透明 PNG 无副作用。</item>
+        /// <item>原文浮于章上 关 → 开：默认改为「字压章」，黑字清晰压在红章之上（V1.1.1.4 的功能）。</item>
+        /// </list>
         /// <para>
-        /// 判定从紧：仅当两个键**都正好等于旧默认**时才改写；用户手动调过任一项
-        /// （如主动把不透明度设成 60、或主动打开过去白）一律跳过，尊重既有配置。
-        /// 从未保存过参数的印章（无 size 键）本就直接走新默认值，不在处理范围。
+        /// 判定从紧：仅当某键**正好等于该项旧默认**时才改写，用户手动调过该项则跳过。
+        /// 从未保存过参数的印章（无 size 键）本就走新默认值，不在处理范围。
         /// </para>
         /// <para>
-        /// 仅执行一次（[StampDefaults] solidRedMigrated 标记），此后不再改写用户配置——
-        /// 用户事后自行调回低不透明度不会被二次覆盖。迁移失败静默，不阻断启动。
+        /// 仅执行一次（[StampDefaults] v13DefaultsMigrated 标记），此后不再改写用户配置——
+        /// 用户事后自行调回旧值不会被二次覆盖。迁移失败静默，不阻断启动。
         /// </para>
         /// </summary>
-        public static void MigrateStampDefaultsToSolidRed()
+        public static void MigrateStampDefaultsToV13()
         {
             try
             {
                 if (!File.Exists(IniPath)) return;
                 IniFileHelper ini = new IniFileHelper(IniPath);
-                if (ini.ContentValue(StampDefaultsSection, StampDefaultsSolidRedKey) == "1") return;
+                if (ini.ContentValue(StampDefaultsSection, StampDefaultsMigratedKey) == "1") return;
 
-                int changed = 0;
+                int solidRed = 0, underText = 0;
                 foreach (StampEntry entry in LoadStampEntries())
                 {
                     // 无 size 键 = 该章参数从未保存过 → 本就走新默认值，无需迁移
                     if (!HasStampParams(entry.DisplayName)) continue;
 
                     string sec = StampParamSection(entry.DisplayName);
-                    int opacity = ini.GetIniInt(sec, "opacity", CurrentStampDefaultOpacity);
-                    int removeWhite = ini.GetIniInt(sec, "removeWhite", 1);
-                    if (opacity != LegacyStampDefaultOpacity || removeWhite != 0) continue;
 
-                    ini.WriteIniInt(sec, "opacity", CurrentStampDefaultOpacity);
-                    ini.WriteIniInt(sec, "removeWhite", 1);
-                    changed++;
+                    // 不透明度 60 → 100 / 去白 0 → 1（两项都正好是旧默认才改）
+                    if (ini.GetIniInt(sec, "opacity", CurrentStampDefaultOpacity) == LegacyStampDefaultOpacity
+                        && ini.GetIniInt(sec, "removeWhite", 1) == 0)
+                    {
+                        ini.WriteIniInt(sec, "opacity", CurrentStampDefaultOpacity);
+                        ini.WriteIniInt(sec, "removeWhite", 1);
+                        solidRed++;
+                    }
+
+                    // 原文浮于章上 0 → 1（V1.1.1.4 引入时默认关；V1.3.0 默认改为字压章）
+                    if (ini.GetIniInt(sec, "stampUnderText", 1) == 0)
+                    {
+                        ini.WriteIniInt(sec, "stampUnderText", 1);
+                        underText++;
+                    }
                 }
 
-                ini.WriteIniString(StampDefaultsSection, StampDefaultsSolidRedKey, "1");
-                if (changed > 0)
+                ini.WriteIniString(StampDefaultsSection, StampDefaultsMigratedKey, "1");
+                if (solidRed > 0)
                 {
                     IniFileHelper.LogAction?.Invoke(
-                        "[STAMP-DEFAULTS] V1.3.0 实心红章迁移：已将 " + changed
-                        + " 个印章参数由 不透明度60/去白关 升为 不透明度100/去白开");
+                        "[STAMP-DEFAULTS] V1.3.0 迁移：已将 " + solidRed
+                        + " 个印章由 不透明度60/去白关 升为 不透明度100/去白开");
+                }
+                if (underText > 0)
+                {
+                    IniFileHelper.LogAction?.Invoke(
+                        "[STAMP-DEFAULTS] V1.3.0 迁移：已将 " + underText
+                        + " 个印章的 stampUnderText 由 关 改为 开（默认改为字压章：黑字压在红章之上）");
                 }
             }
             catch
@@ -798,6 +815,49 @@ namespace PDFQFZ.WPF.Services
             public string Path { get; }
         }
 
+        /// <summary>V1.1.1.6：印章库去重检测（财务印章准确性保障）。检查同一文件被不同显示名重复导入（或同名不同文件），返回重复项列表（不阻断，只警示日志+前端提示）。</summary>
+        public static List<string> DetectDuplicateStamps()
+        {
+            var entries = LoadStampEntries();
+            var duplicates = new List<string>();
+            // 同路径不同名：同一印章图片被重复导入（浪费库空间、记忆混乱）
+            var pathToNames = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+            foreach (var e in entries)
+            {
+                if (string.IsNullOrWhiteSpace(e.Path)) continue;
+                string fullPath = Path.GetFullPath(e.Path);
+                if (!pathToNames.TryGetValue(fullPath, out var names))
+                {
+                    names = new List<string>();
+                    pathToNames[fullPath] = names;
+                }
+                names.Add(e.DisplayName);
+            }
+            foreach (var kv in pathToNames)
+            {
+                if (kv.Value.Count > 1)
+                    duplicates.Add("重复文件（路径相同、名称不同）：" + string.Join(" / ", kv.Value) + " → " + kv.Key);
+            }
+            // 同名不同路径：同显示名指向不同图片（财务印章混乱风险最高）
+            var nameToPaths = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+            foreach (var e in entries)
+            {
+                if (string.IsNullOrWhiteSpace(e.DisplayName)) continue;
+                if (!nameToPaths.TryGetValue(e.DisplayName.Trim(), out var paths))
+                {
+                    paths = new List<string>();
+                    nameToPaths[e.DisplayName.Trim()] = paths;
+                }
+                paths.Add(e.Path);
+            }
+            foreach (var kv in nameToPaths)
+            {
+                if (kv.Value.Count > 1)
+                    duplicates.Add("重复名称（名称相同、文件不同）：" + kv.Key + " → " + string.Join("; ", kv.Value.Select(p => p ?? "无路径")));
+            }
+            return duplicates;
+        }
+
         /// <summary>读取印章条目列表（含显示名）；旧格式（纯路径）自动识别，显示名取文件名不含后缀。</summary>
         public static List<StampEntry> LoadStampEntries()
         {
@@ -1200,6 +1260,19 @@ namespace PDFQFZ.WPF.Services
             public int TextureRadial = 20;       // 径向压印上限 0-100（中心深边缘浅）V1.0.0.83：默认 20
             public int TextureCast = 0;         // 整体色偏上限 0-100（印泥批次色差）V1.0.0.83：默认 0（不变）
             public int TexturePresetIndex = 0;  // 当前渲染方案（0=自定义，1-4=方案N，随章记忆，见规范 §7.3）
+            // V1.1.1.0：盖章叠字（章上叠一行文字）——随章记忆，仅手动盖章生效
+            public bool TextOverlayEnabled = false; // 是否在盖章时顺带在章上叠一行文字
+            public string TextOverlayText = "";     // 叠字文字（空=不叠）
+            public int TextOverlayPos = 0;          // 叠字位置 0=章中心 1=章上方 2=章下方
+            public int TextOverlayColorArgb = unchecked((int)0xFFC00000); // 叠字颜色（默认印泥红）
+            public int TextOverlaySize = 30;        // 叠字高度占章尺寸的百分比（10~100，默认 30）
+            // V1.1.1.4：原文浮于章上（章衬于文字下）——随章记忆；输出时章画到文字层之下，合同原文压在章图案之上
+            // V1.1.1.4：原文浮于章上。V1.3.0 默认 false → true（默认改为「字压章」，黑字清晰压在红章之上）。
+            // true 时输出把章画到文字层之下（GetUnderContent），合同原文压在章图案之上；
+            // false=章压字（GetOverContent，所见即所得）。
+            // 扫描件/整页图片无文字层时开 true 会让章被底图盖住，此时 V1.1.1.5/V1.1.1.6 的
+            // 全页图片安全阀会自动回落为章压字，保证印章始终可见。
+            public bool StampUnderText = true;
         }
 
         private static string StampParamSection(string stampFileName)
@@ -1261,6 +1334,14 @@ namespace PDFQFZ.WPF.Services
                 p.TextureRadial = ini.GetIniInt(sec, "textureRadial", p.TextureRadial);
                 p.TextureCast = ini.GetIniInt(sec, "textureCast", p.TextureCast);
                 p.TexturePresetIndex = ini.GetIniInt(sec, "texturePresetIndex", 0);
+                // V1.1.1.0：盖章叠字（旧 config.ini 无这些键 → 回落默认值）
+                p.TextOverlayEnabled = ini.GetIniInt(sec, "textOverlayEnabled", 0) == 1;
+                p.TextOverlayText = ini.ContentValue(sec, "textOverlayText") ?? "";
+                p.TextOverlayPos = ini.GetIniInt(sec, "textOverlayPos", p.TextOverlayPos);
+                p.TextOverlayColorArgb = ini.GetIniInt(sec, "textOverlayColorArgb", p.TextOverlayColorArgb);
+                p.TextOverlaySize = ini.GetIniInt(sec, "textOverlaySize", p.TextOverlaySize);
+                // V1.3.0：读取默认 0 → 1（默认字压章）；已保存 stampUnderText=0 的印章由 MigrateStampDefaultsToV13 一次性翻转
+                p.StampUnderText = ini.GetIniInt(sec, "stampUnderText", 1) == 1; // V1.1.1.4：原文浮于章上（V1.3.0 默认开）
             }
             catch
             {
@@ -1329,6 +1410,13 @@ namespace PDFQFZ.WPF.Services
                 ini.WriteIniInt(sec, "textureRadial", p.TextureRadial);
                 ini.WriteIniInt(sec, "textureCast", p.TextureCast);
                 ini.WriteIniInt(sec, "texturePresetIndex", p.TexturePresetIndex);
+                // V1.1.1.0：盖章叠字（写空串=清除文字，避免旧值残留）
+                ini.WriteIniInt(sec, "textOverlayEnabled", p.TextOverlayEnabled ? 1 : 0);
+                ini.WriteIniString(sec, "textOverlayText", p.TextOverlayText ?? "");
+                ini.WriteIniInt(sec, "textOverlayPos", p.TextOverlayPos);
+                ini.WriteIniInt(sec, "textOverlayColorArgb", p.TextOverlayColorArgb);
+                ini.WriteIniInt(sec, "textOverlaySize", p.TextOverlaySize);
+                ini.WriteIniInt(sec, "stampUnderText", p.StampUnderText ? 1 : 0); // V1.1.1.4：原文浮于章上
             }
             catch
             {

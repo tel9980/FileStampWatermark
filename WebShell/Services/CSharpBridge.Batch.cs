@@ -361,9 +361,10 @@ namespace PDFQFZ.WebShell.Services
                         RemoveWhite = sp.RemoveWhite, Opacity = sp.Opacity, Rotation = sp.Rotation,
                         OriginalRotationCrop = true, SizeMm = sp.Size, // v2.4.0.76: 固定切边
                         WzType = wzType, WzPercent = wzPercent, MaxSplit = ms, Placements = col,
-                        // V1.1.0.3：骑缝章首/尾页章宽可配置
+// V1.1.0.3：骑缝章首/尾页章宽可配置
                         SeamFirstEnabled = sp.SeamFirstEnabled, SeamFirstRatio = sp.SeamFirstRatio,
                         SeamLastEnabled = sp.SeamLastEnabled, SeamLastRatio = sp.SeamLastRatio,
+                        StampUnderText = sp.StampUnderText, // V1.1.1.4：原文浮于章上（文件夹模式随当前章记忆）
                         Watermarks = wmSnap, // V2.4.0.96：文件夹模式文字水印（PDFWatermark 内按 file 过滤）
                         TextureEnabled = sp.TextureQuality,
                         TextureSeed = NewTextureSeed(),
@@ -517,7 +518,9 @@ namespace PDFQFZ.WebShell.Services
                     SeamFirstEnabled = spG.SeamFirstEnabled, SeamFirstRatio = spG.SeamFirstRatio,
                     SeamLastEnabled = spG.SeamLastEnabled, SeamLastRatio = spG.SeamLastRatio,
                     Placements = _stampPlacements,
-                    Watermarks = _watermarkEnabled ? _watermarks.Snapshot() : null, // V2.4.0.96：文字水印（开关关闭不输出；PDFWatermark 按 sourcepath 过滤）
+                    StampUnderText = spG.StampUnderText, // V1.1.1.4：原文浮于章上（随当前章记忆）
+                    // V1.1.1.0：叠字框（IsTextOverlay）始终输出，不受「文字水印」开关闸门；普通水印框仍受 _watermarkEnabled 控制
+                    Watermarks = _watermarks.Snapshot().Where(b => b.IsTextOverlay || _watermarkEnabled).ToList(),
                     TextureEnabled = spG.TextureQuality,
                     TextureSeed = NewTextureSeed(),
                     TextureBrightness = spG.TextureBrightness, TextureBlob = spG.TextureBlob,
@@ -564,7 +567,7 @@ namespace PDFQFZ.WebShell.Services
                         int djB = string.Equals(mode, "overlay", StringComparison.OrdinalIgnoreCase) ? 0 : 1;
                         int dpiB = dpi < 72 ? 72 : (dpi > 600 ? 600 : dpi);
                         var previewSnap = _stampPlacements.Snapshot(); // UI 线程快照，Task 内只读快照不碰共享集合
-                        var wmSnap = _watermarkEnabled ? _watermarks.Snapshot() : null; // V2.4.0.96：文字水印框快照（文件夹模式逐文件按 sourcepath 过滤）
+                        var wmSnap = _watermarks.Snapshot().Where(b => b.IsTextOverlay || _watermarkEnabled).ToList(); // V1.1.1.0：叠字框始终输出；普通水印框受开关控制
                         var filesB = batchFiles; var outDirB2 = outDirB; var namingB = naming;
                         Task.Run(() =>
                         {

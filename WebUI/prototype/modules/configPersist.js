@@ -70,6 +70,14 @@ window.PdfqModules.configPersist = {
       if(p.textureCast!==undefined) this.tex.hue=p.textureCast;
       if(p.textureWhite!==undefined) this.tex.white=p.textureWhite;
       if(p.texturePresetIndex!==undefined) this.preset=p.texturePresetIndex;
+      /* V1.1.1.0：盖章叠字（随章记忆；老 config.ini 无这些键时保持前端默认值） */
+      if(p.textOverlayEnabled!==undefined) this.textOvEnabled=!!p.textOverlayEnabled;
+      if(p.textOverlayText!==undefined) this.textOvText=p.textOverlayText||'';
+      if(p.textOverlayPos!==undefined) this.textOvPos=String(p.textOverlayPos||0);
+      if(p.textOverlayColorArgb!==undefined) this.textOvColor=this.wmArgbToHex?this.wmArgbToHex(p.textOverlayColorArgb):'#C00000';
+      if(p.textOverlaySize!==undefined) this.textOvSize=(p.textOverlaySize>=10&&p.textOverlaySize<=100)?p.textOverlaySize:30;
+      /* V1.1.1.4：原文浮于章上（随章记忆；老 config.ini 无此键时保持前端默认值关） */
+      if(p.stampUnderText!==undefined) this.stampUnderText=!!p.stampUnderText;
       this._shellLoading=false;
     },
     fmtToFront(f){ return {yyyyMMdd:'d8','yyyy-MM-dd':'dash','yyyyMMdd-HHmm':'d8-t','yyyy-MM-dd-HH-mm':'full'}[f]||'d8'; },
@@ -140,6 +148,7 @@ window.PdfqModules.configPersist = {
         textureCast: this.tex.hue,
         textureWhite: this.tex.white,
         texturePresetIndex: this.preset,
+        stampUnderText: !!this.stampUnderText, // V1.1.1.4：原文浮于章上（随章记忆）
       };
       // V2.4.0.80：写盘防抖 200ms（滑块拖动/连续调参合并一次写盘，替代 V47 即时写盘；防丢参数靠 flush）
       this._stampParamsPending=p;

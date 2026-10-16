@@ -282,6 +282,43 @@ namespace PDFQFZ.Library
             }
         }
 
+        /// <summary>V1.1.1.6：撤销最近一次手动盖章（按文档+页查找 type=manual 的最新章，LIFO）。
+        /// 仅撤回手动放置（batchId=0, type=manual）的最近一枚，不影响范围批次/按文字批次。返回被撤章的 id。</summary>
+        public int UndoLastManual(string documentPath, int page)
+        {
+            lock (sync)
+            {
+                var manualOnPage = placements
+                    .Where(p => string.Equals(p.DocumentPath, documentPath, StringComparison.OrdinalIgnoreCase)
+                                && p.Page == page
+                                && string.Equals(p.Type, "manual", StringComparison.OrdinalIgnoreCase)
+                                && p.BatchId == 0)
+                    .OrderByDescending(p => p.Id)
+                    .FirstOrDefault();
+                if (manualOnPage != null)
+                {
+                    placements.Remove(manualOnPage);
+                    return manualOnPage.Id;
+                }
+                return -1; // 无可撤回的手动章
+            }
+        }
+
+        /// <summary>取最近手动盖章（预览刷新用，不删除）。</summary>
+        public StampPlacement FindLastManual(string documentPath, int page)
+        {
+            lock (sync)
+            {
+                return placements
+                    .Where(p => string.Equals(p.DocumentPath, documentPath, StringComparison.OrdinalIgnoreCase)
+                                && p.Page == page
+                                && string.Equals(p.Type, "manual", StringComparison.OrdinalIgnoreCase)
+                                && p.BatchId == 0)
+                    .OrderByDescending(p => p.Id)
+                    .FirstOrDefault();
+            }
+        }
+
         /// <summary>v2.4.0.58：批量预览章约定 batchId=-1（区别于手动 0 / 范围批次 &gt;0）。</summary>
         public const int BatchPreviewId = -1;
 

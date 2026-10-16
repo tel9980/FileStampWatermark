@@ -26,11 +26,14 @@ namespace PDFQFZ.WPF.Services
         public int WzType;                   // 骑缝章位置 0下/1上/2左/3右
         public int WzPercent;                // 骑缝章位置百分比
         public int MaxSplit;                 // 骑缝章最大分割数
-        // V1.1.0.3：骑缝章首/尾页章宽可配置（占章总宽 %，0-100；关闭=回退旧保底逻辑）  V1.1.0.4：默认20、范围5~45
+// V1.1.0.3：骑缝章首/尾页章宽可配置（占章总宽 %，0-100；关闭=回退旧保底逻辑）  V1.1.0.4：默认20、范围5~45
         public bool SeamFirstEnabled = true; // 首页章宽开关
         public int SeamFirstRatio = 20;      // 首页章宽占比 %
         public bool SeamLastEnabled = true;  // 尾页章宽开关
         public int SeamLastRatio = 20;       // 尾页章宽占比 %
+        // V1.1.1.4：原文浮于章上——true 时章画到文字层之下（GetUnderContent），合同原文压在章图案之上；
+        // false=默认章压字（GetOverContent，所见即所得）
+        public bool StampUnderText;
         public StampPlacementCollection Placements;   // 页面章放置集合
         // V2.4.0.96：文字水印框列表（预览放置的水印框快照；null/空 = 不加文字水印，与盖章互不干扰）
         public List<WatermarkBox> Watermarks;
@@ -123,6 +126,250 @@ namespace PDFQFZ.WPF.Services
         }
 
         // ===================== 盖章核心 =====================
+        /// <summary>V1.1.1.5：判断某页是否被整页图片覆盖（扫描件/OCR件/整页底图）。
+        /// 衬底模式（GetUnderContent）下章会被这类图片完全盖住→看不见，需自动回落章压字。
+        /// 判定：顶层 XObject 有图片且像素宽高均≥页面点数（72dpi 下 1px=1pt，扫描件 dpi 更高像素只会更大）。
+        /// Resources 可能继承自父节点，沿 PARENT 链向上找。</summary>
+        private static bool PageCoveredByFullImage(PdfReader reader, int page)
+        {
+            try
+            {
+                if (reader == null || page < 1 || page > reader.NumberOfPages) return false;
+                var size = reader.GetPageSizeWithRotation(page);
+                float pw = size.Width, ph = size.Height;
+                if (pw <= 0 || ph <= 0) return false;
+                if (DiagEnabled) try { System.IO.File.AppendAllText(System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "wm_debug.log"), DateTime.Now.ToString("HH:mm:ss.fff") + " [COVER] page=" + page + " 页面pt=" + pw.ToString("F0") + "x" + ph.ToString("F0") + Environment.NewLine, System.Text.Encoding.UTF8); } catch { }
+                PdfDictionary dict = reader.GetPageN(page);
+                PdfDictionary res = null;
+                int guard = 0;
+                while (dict != null && guard++ < 10)
+                {
+                    res = dict.GetAsDict(PdfName.RESOURCES);
+                    if (res != null) break;
+                    dict = dict.GetAsDict(PdfName.PARENT);
+                }
+                if (res == null) { if (DiagEnabled) try { System.IO.File.AppendAllText(System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "wm_debug.log"), DateTime.Now.ToString("HH:mm:ss.fff") + " [COVER] page=" + page + " 无Resources(含PARENT链) → 判false" + Environment.NewLine, System.Text.Encoding.UTF8); } catch { } return false; }
+                PdfDictionary xobjs = res.GetAsDict(PdfName.XOBJECT);
+                if (xobjs == null) { if (DiagEnabled) try { System.IO.File.AppendAllText(System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "wm_debug.log"), DateTime.Now.ToString("HH:mm:ss.fff") + " [COVER] page=" + page + " 有Resources但无XObject → 判false（文字版PDF正常路径）" + Environment.NewLine, System.Text.Encoding.UTF8); } catch { } return false; }
+                int imgTotal = 0, skipTransparent = 0, skipSmallDraw = 0;
+                foreach (PdfName key in xobjs.Keys)
+                {
+                    PdfStream st = PdfReader.GetPdfObject(xobjs.Get(key)) as PdfStream;
+                    if (st == null) continue;
+                    if (!PdfName.IMAGE.Equals(st.GetAsName(PdfName.SUBTYPE))) continue;
+                    imgTotal++;
+                    PdfNumber w = st.GetAsNumber(PdfName.WIDTH);
+                    PdfNumber h = st.GetAsNumber(PdfName.HEIGHT);
+                    if (w == null || h == null) { if (DiagEnabled) try { System.IO.File.AppendAllText(System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "wm_debug.log"), DateTime.Now.ToString("HH:mm:ss.fff") + " [COVER] page=" + page + " XObject#" + imgTotal + " 无WIDTH/HEIGHT → 跳过" + Environment.NewLine, System.Text.Encoding.UTF8); } catch { } continue; }
+
+                    // V1.1.1.6 误判修复①：带透明通道（SMask/软掩码）的图片不算"整页覆盖"。
+                    // 半透明 logo、带 alpha 的 Word 导出底图不会完全遮住衬于其下的印章，不应触发回落。
+                    if (st.GetAsDict(PdfName.SMASK) != null)
+                    {
+                        skipTransparent++;
+                        if (DiagEnabled) try { System.IO.File.AppendAllText(System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "wm_debug.log"), DateTime.Now.ToString("HH:mm:ss.fff") + " [COVER] page=" + page + " XObject#" + imgTotal + " 像素=" + w.IntValue + "x" + h.IntValue + " 有SMask(透明通道) → 不算整页覆盖，跳过" + Environment.NewLine, System.Text.Encoding.UTF8); } catch { }
+                        continue;
+                    }
+
+                    // V1.1.1.6 误判修复②：像素尺寸大 ≠ 铺满页面。必须叠加"实际绘制尺寸"判定——
+                    // 扫描件是 1:1 铺满（缩放矩阵≈1，字面尺寸≈页面点尺寸）；
+                    // Word/合同导出的大图往往被缩小后放在页角，按像素尺寸判定会把它们误当扫描件，
+                    // 从而静默推翻用户的"原文浮于章上"设置（v1.1.1.5 的实际投诉根因）。
+                    float drawW = 0f, drawH = 0f;
+                    if (!TryGetImageDrawSize(reader, page, key, out drawW, out drawH))
+                    {
+                        // 拿不到绘制矩阵（内容流被压缩/异常）→ 保守判 false，让用户设置按原意生效
+                        skipSmallDraw++;
+                        if (DiagEnabled) try { System.IO.File.AppendAllText(System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "wm_debug.log"), DateTime.Now.ToString("HH:mm:ss.fff") + " [COVER] page=" + page + " XObject#" + imgTotal + " 无法解析绘制矩阵 → 保守判false（保用户设置）" + Environment.NewLine, System.Text.Encoding.UTF8); } catch { }
+                        continue;
+                    }
+                    // 覆盖判定：绘制尺寸 ≥ 页面尺寸 98%（留 2% 容差，避免扫描件因边框/裁切差异漏判）
+                    bool cover = drawW >= pw * 0.98f && drawH >= ph * 0.98f;
+                    if (DiagEnabled) try { System.IO.File.AppendAllText(System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "wm_debug.log"), DateTime.Now.ToString("HH:mm:ss.fff") + " [COVER] page=" + page + " XObject#" + imgTotal + " 像素=" + w.IntValue + "x" + h.IntValue + " 绘制=" + drawW.ToString("F1") + "x" + drawH.ToString("F1") + "pt 页面pt=" + pw.ToString("F0") + "x" + ph.ToString("F0") + " → " + (cover ? "整页覆盖(扫描件)" : "未铺满") + Environment.NewLine, System.Text.Encoding.UTF8); } catch { }
+                    if (cover) return true;
+                }
+                if (DiagEnabled) try { System.IO.File.AppendAllText(System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "wm_debug.log"), DateTime.Now.ToString("HH:mm:ss.fff") + " [COVER] page=" + page + " 共" + imgTotal + "个图片XObject(透明跳过" + skipTransparent + "/矩阵未知跳过" + skipSmallDraw + ")，无一铺满整页 → 判false，按StampUnderText原意执行" + Environment.NewLine, System.Text.Encoding.UTF8); } catch { }
+            }
+            catch (Exception exC)
+            {
+                if (DiagEnabled) try { System.IO.File.AppendAllText(System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "wm_debug.log"), DateTime.Now.ToString("HH:mm:ss.fff") + " [COVER] page=" + page + " 异常→判false：" + exC.Message + Environment.NewLine, System.Text.Encoding.UTF8); } catch { }
+            }
+            return false;
+        }
+
+        /// <summary>V1.1.1.6：解析某图片 XObject 在该页的实际绘制尺寸（pt）。
+        /// 自包含实现：直接扫 PdfReader.GetPageContent 返回的已解码内容流字节，
+        /// 手工做 token 切分，只跟踪 q/Q 栈、cm（CTM 累乘）和 Do（取图片固有尺寸×当前 CTM）。
+        /// 刻意不依赖 iTextSharp 内部 parser/tokenizer 类型（那些在不同小版本间可见性不稳定），
+        /// 保证编译可预期；解析失败一律返回 false，由调用方"保守不回落"。
+        /// 注意：GetPageContent 已解码 Flate，故可直接按 PDF 语法扫；数组对象 (...)/dict<<>> 用深度计数跳过。</summary>
+        private static bool TryGetImageDrawSize(PdfReader reader, int page, PdfName xobjName, out float drawW, out float drawH)
+        {
+            drawW = 0f; drawH = 0f;
+            try
+            {
+                PdfDictionary pageDict = reader.GetPageN(page);
+                if (pageDict == null) return false;
+                byte[] content = reader.GetPageContent(pageDict);
+                if (content == null || content.Length == 0) return false;
+
+                // 目标名称：PdfName.ToString() 形如 "/Im0"，取去掉前导斜杠的部分
+                string target = xobjName.ToString();
+                if (string.IsNullOrEmpty(target)) return false;
+                if (target[0] == '/') target = target.Substring(1);
+
+                // 先取图片固有像素尺寸（ctm 为单位阵时的结果就是像素尺寸，这里用绝对值兜底）
+                PdfDictionary res = pageDict.GetAsDict(PdfName.RESOURCES);
+                PdfDictionary xobjs = res == null ? null : res.GetAsDict(PdfName.XOBJECT);
+                PdfStream stm = xobjs == null ? null : PdfReader.GetPdfObject(xobjs.Get(xobjName)) as PdfStream;
+                if (stm == null) return false;
+                var wN = stm.GetAsNumber(PdfName.WIDTH);
+                var hN = stm.GetAsNumber(PdfName.HEIGHT);
+                if (wN == null || hN == null) return false;
+                int pxW = Math.Abs(wN.IntValue), pxH = Math.Abs(hN.IntValue);
+                if (pxW <= 0 || pxH <= 0) return false;
+
+                // CTM 状态：6 元素仿射 [a b c d e f]
+                float[] ctm = new float[] { 1f, 0f, 0f, 1f, 0f, 0f };
+                var qs = new System.Collections.Generic.Stack<float[]>();
+                var operands = new System.Collections.Generic.List<float>(6);
+                bool pendingTarget = false; // 扫描期局部标记：最近读到的名称是否命中目标（不设静态字段，避免批处理并发串扰）
+
+                int i = 0, n = content.Length;
+                while (i < n)
+                {
+                    byte b = content[i];
+                    // 空白与注释
+                    if (b == 0x20 || b == 0x0A || b == 0x0D || b == 0x09 || b == 0x0C || b == 0x00) { i++; continue; }
+                    if (b == (byte)'%')
+                    {
+                        i++;
+                        while (i < n && content[i] != 0x0A && content[i] != 0x0D) i++;
+                        continue;
+                    }
+                    // 数组 (...)：深度计数跳过（内嵌图像 BPC/Color 指令在数组里，不影响 CTM）
+                    if (b == (byte)'(')
+                    {
+                        i++; int depth = 1;
+                        while (i < n && depth > 0)
+                        {
+                            if (content[i] == (byte)'\\') { i += 2; continue; }
+                            if (content[i] == (byte)'(') depth++;
+                            else if (content[i] == (byte)') depth--;
+                            i++;
+                        }
+                        continue;
+                    }
+                    // 字典 <<...>>：深度计数跳过
+                    if (b == (byte)'<' && i + 1 < n && content[i + 1] == (byte)'<')
+                    {
+                        i += 2; int depth = 2;
+                        while (i < n && depth > 0)
+                        {
+                            if (content[i] == (byte)'<' && i + 1 < n && content[i + 1] == (byte)'<') { depth++; i += 2; continue; }
+                            if (content[i] == (byte)'>' && i + 1 < n && content[i + 1] == (byte)'>') { depth--; i += 2; continue; }
+                            i++;
+                        }
+                        continue;
+                    }
+                    // 十六进制串 <...>：跳过（SMask 引用等）
+                    if (b == (byte)'<')
+                    {
+                        i++; while (i < n && content[i] != (byte)'>') i++; i++; continue;
+                    }
+                    // 数字（可能带小数点/负号）
+                    if ((b >= (byte)'0' && b <= (byte)'9') || b == (byte)'.' || b == (byte)'-' || b == (byte)'+')
+                    {
+                        int st = i;
+                        if (content[i] == (byte)'-' || content[i] == (byte)'+') i++;
+                        while (i < n)
+                        {
+                            byte d = content[i];
+                            if ((d >= (byte)'0' && d <= (byte)'9') || d == (byte)'.' || d == (byte)'-' || d == (byte)'+') { i++; continue; }
+                            break;
+                        }
+                        string numStr = System.Text.Encoding.ASCII.GetString(content, st, i - st);
+                        float fv;
+                        if (float.TryParse(numStr, System.Globalization.NumberStyles.Float,
+                                System.Globalization.CultureInfo.InvariantCulture, out fv))
+                        {
+                            operands.Add(fv);
+                        }
+                        continue;
+                    }
+                    // 名称 /Name
+                    if (b == (byte)'/')
+                    {
+                        i++; int st = i;
+                        while (i < n)
+                        {
+                            byte d = content[i];
+                            bool delim = d <= 0x20 || d == (byte)'/' || d == (byte)'(' || d == (byte)')' ||
+                                         d == (byte)'<' || d == (byte)'>' || d == (byte)'[' || d == (byte)']' ||
+                                         d == (byte)'{' || d == (byte)'}' || d == (byte)'/' || d == (byte)'%';
+                            if (delim) break;
+                            i++;
+                        }
+                        operands.Add(float.NaN); // 占位：名称与数字混栈，用 NaN 标记
+                        // 直接判断是否是我们要的 Do 目标（简化：记录最近名称）
+                        if (System.Text.Encoding.ASCII.GetString(content, st, i - st) == target) pendingTarget = true;
+                        continue;
+                    }
+                    // 操作符（其余可见字符）
+                    {
+                        int st = i;
+                        while (i < n)
+                        {
+                            byte d = content[i];
+                            bool delim = d <= 0x20 || d == (byte)'/' || d == (byte)'(' || d == (byte)')' ||
+                                         d == (byte)'[' || d == (byte)']' || d == (byte)'{' || d == (byte)'}' ||
+                                         d == (byte)'<' || d == (byte)'>' || d == (byte)'%';
+                            if (delim) break;
+                            i++;
+                        }
+                        string op = System.Text.Encoding.ASCII.GetString(content, st, i - st);
+                        if (op.Length == 0) { i++; continue; }
+
+                        if (op == "q") { qs.Push((float[])ctm.Clone()); }
+                        else if (op == "Q") { if (qs.Count > 0) ctm = qs.Pop(); }
+                        else if (op == "cm" && operands.Count >= 6)
+                        {
+                            float[] m = new float[6];
+                            for (int k = 5; k >= 0; k--) m[k] = operands[operands.Count - 6 + k];
+                            ctm = MulMatrix(m, ctm);
+                        }
+                        else if (op == "Do" && pendingTarget)
+                        {
+                            // 命中目标图片：绘制尺寸 = 固有像素 × 当前 CTM 缩放
+                            float sx = (float)Math.Sqrt(Math.Abs(ctm[0] * ctm[3] - ctm[1] * ctm[2]));
+                            if (sx <= 0.0001f) sx = Math.Abs(ctm[0]) > 0.0001f ? Math.Abs(ctm[0]) : Math.Abs(ctm[3]);
+                            drawW = pxW * sx;
+                            drawH = pxH * sx;
+                            return true;
+                        }
+                        pendingTarget = false;
+                        operands.Clear();
+                    }
+                }
+            }
+            catch { return false; }
+            return false;
+        }
+
+
+        /// <summary>3x2 仿射矩阵相乘 m × n（PDF cm 语义：先应用 n 再应用 m）。</summary>
+        private static float[] MulMatrix(float[] m, float[] n)
+        {
+            return new float[]
+            {
+                m[0]*n[0] + m[1]*n[2],
+                m[0]*n[1] + m[1]*n[3],
+                m[2]*n[0] + m[3]*n[2],
+                m[2]*n[1] + m[3]*n[3],
+                m[4]*n[0] + m[5]*n[2] + n[4],
+                m[4]*n[1] + m[5]*n[3] + n[5],
+            };
+        }
         public static bool PDFWatermark(
             StampOptions opt,
             Bitmap seamImage,
@@ -187,6 +434,8 @@ namespace PDFQFZ.WPF.Services
                 if (opt.WzType == 2 || opt.WzType == 1) qfzList.Reverse();
 
                 PdfContentByte waterMarkContent;
+                // V1.1.1.5：整页图片回落标记（衬底会被图片盖住的页自动改章压字，输出后统一提示一次）
+                bool underFallback = false;
 
                 if (opt.QfzType != 1 && qfzPages > 1)
                 {
@@ -213,7 +462,12 @@ namespace PDFQFZ.WPF.Services
                         for (int y = 0; y < tmp; y++)
                         {
                             int page = qfzList[startIndex + y];
-                            waterMarkContent = pdfStamper.GetOverContent(page);
+                            // V1.1.1.5：整页图片（扫描件/OCR件）自动回落章压字，否则章被图片盖住看不见
+                            bool underSeam = opt.StampUnderText && !PageCoveredByFullImage(pdfReader, page);
+                            if (opt.StampUnderText && !underSeam) underFallback = true;
+                            waterMarkContent = underSeam ? pdfStamper.GetUnderContent(page) : pdfStamper.GetOverContent(page);
+                            // V1.1.1.6 诊断：骑缝章层决策（StampUnderText=true 时期望 UNDER，被整页图片拦截时回落 OVER）
+                            if (DiagEnabled) try { System.IO.File.AppendAllText(System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "wm_debug.log"), DateTime.Now.ToString("HH:mm:ss.fff") + " [LAYER-SEAM] page=" + page + " StampUnderText=" + opt.StampUnderText + " → " + (underSeam ? "GetUnderContent(章在原文下)" : "GetOverContent(章压原文)") + Environment.NewLine, System.Text.Encoding.UTF8); } catch { }
                             int rotation = pdfReader.GetPageRotation(page);
                             iTextSharp.text.Rectangle psize = pdfReader.GetPageSize(page);
                             bool rotLand = (rotation == 90 || rotation == 270);
@@ -298,7 +552,15 @@ namespace PDFQFZ.WPF.Services
                             continue;
                         }
 
-                        waterMarkContent = pdfStamper.GetOverContent(page);
+                        // V1.1.1.5：整页图片（扫描件/OCR件）自动回落章压字，否则章被图片盖住看不见
+                        bool underPg = opt.StampUnderText && !PageCoveredByFullImage(pdfReader, page);
+                        if (opt.StampUnderText && !underPg) underFallback = true;
+                        waterMarkContent = underPg ? pdfStamper.GetUnderContent(page) : pdfStamper.GetOverContent(page);
+                        // V1.1.1.6 诊断：页面章层决策 + 该页叠字/水印框数量（定位"字没浮在章上"是层错还是框没进）
+                        if (DiagEnabled) try {
+                            int nWm = 0; try { nWm = opt.Watermarks == null ? 0 : opt.Watermarks.Count(b => b != null && (b.Page == 0 || b.Page == page)); } catch { }
+                            System.IO.File.AppendAllText(System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "wm_debug.log"), DateTime.Now.ToString("HH:mm:ss.fff") + " [LAYER-PAGE] page=" + page + " StampUnderText=" + opt.StampUnderText + " 章=" + (underPg ? "UNDER(原文下)" : "OVER(压原文)") + " 本章水印框=" + nWm + " 总框=" + (opt.Watermarks==null?0:opt.Watermarks.Count) + Environment.NewLine, System.Text.Encoding.UTF8);
+                        } catch { }
                         int pageRotation = pdfReader.GetPageRotation(page);
                         iTextSharp.text.Rectangle pageSize = pdfReader.GetPageSize(page);
 
@@ -371,6 +633,9 @@ namespace PDFQFZ.WPF.Services
                         if (pageBoxes == null || pageBoxes.Count == 0) continue;
 
                         PdfContentByte wmContent = pdfStamper.GetOverContent(page);
+                        // V1.1.1.6 诊断：水印层固定 OVER（原文之上）。StampUnderText=true 时期望章在 UNDER、
+                        // 叠字在 OVER，此时章被原文盖住——若用户报"字没浮在章上"多半是此路径，看日志比对。
+                        if (DiagEnabled) try { System.IO.File.AppendAllText(System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "wm_debug.log"), DateTime.Now.ToString("HH:mm:ss.fff") + " [LAYER-WM] page=" + page + " 水印框画在 GetOverContent(原文之上) 框数=" + pageBoxes.Count + (opt.StampUnderText ? " ⚠StampUnderText=true章在UNDER会被原文盖住" : "") + Environment.NewLine, System.Text.Encoding.UTF8); } catch { }
                         int pageRotation = pdfReader.GetPageRotation(page);
                         iTextSharp.text.Rectangle pageSize = pdfReader.GetPageSize(page);
                         float pageW = (pageRotation == 90 || pageRotation == 270) ? pageSize.Height : pageSize.Width;
@@ -384,6 +649,9 @@ namespace PDFQFZ.WPF.Services
                     }
                 }
 
+                // V1.1.1.5：整页图片回落提示（衬底会被图片盖住的页已自动改章压字，保证印章可见）
+                if (opt.StampUnderText && underFallback)
+                    log("提示：检测到整页图片（扫描件），已自动改用章压字，保证印章可见；文字版 PDF 才支持原文浮于章上。");
                 return true;
             }
             catch (BadPasswordException)
@@ -774,11 +1042,13 @@ namespace PDFQFZ.WPF.Services
             // 分布随机（噪声/方向/斑点位置，固定于本章，与参数无关 → 调参时分布稳定）
             Random distRnd = new Random(seed);
             // 强度 = 本章固化系数(0.85~1.15，±15% 浮动) × 参数上限 → 参数主控、章与章微调
-            double amp = kb * brightness / 100.0 * 2.4;                 // 印泥浓淡不均 0~2.4（最大值按 40% 档封顶）
-            double blobLevel = kblob * blob / 100.0;                    // 斑点大小 0~1
-            double gradAmp = kgrad * gradient / 100.0 * 1.0;            // 渐变幅度 0~1.0
-            double whiteLevel = kwhite * white / 100.0;                 // 局部露白随滑块（分布随机）
-            double radialLevel = kradial * radial / 100.0 * 2.0;        // 径向压印 0~2（最大值提高 2 倍）
+            // 纹理强度增强：每项系数应用非线性增强（增强手工感：大参数时增强更明显，小参数时更自然）
+            double amp = Math.Pow(kb * brightness / 100.0, 1.15) * 2.8; // 增强基础 ×2.8，非线性
+            double blobLevel = Math.Pow(kblob * blob / 100.0, 1.3);              // 斑块非线性增强
+            double gradAmp = Math.Pow(kgrad * gradient / 100.0, 1.25) * 1.5;    // 渐变幅度增强
+            double whiteLevel = Math.Pow(kwhite * white / 100.0, 1.2);            // 露白增强
+            double radialLevel = Math.Pow(kradial * radial / 100.0, 1.15) * 2.6;  // 径向增强
+            double castT = Math.Pow(Math.Abs(cast) / 100.0 * kcast, 1.2);         // 色调非线性
             // 色调：参数 -100~+100，0=原色；负=偏冷(玫红/紫红)、正=偏暖(橘红/橙)；
             // 方向全局一致（同一批印泥同一色调）、幅度按章浮动；红章始终是红，只是冷暖微差
             double castT = Math.Abs(cast) / 100.0 * kcast;

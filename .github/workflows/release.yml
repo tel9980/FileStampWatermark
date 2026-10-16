@@ -1,0 +1,78 @@
+name: Release — 打 tag 自动编 EXE
+
+# 小白用法：
+#   git tag v1.1.1.0
+#   git push origin v1.1.1.0
+# 推送后到 GitHub → Releases 页下载：
+#   FileStampWatermark_<tag>.exe（免费版，发布用名）
+#   FileStampWatermark_<tag>_VIP.exe（赞助版：主题色+徽章+自定义标题）
+# 注：附件名用 ASCII（runner 对中文文件名支持不稳定，此前中文被吞）；
+#     附件是 Release 产物，不进 git，不违反 AGENTS.md 白名单铁律。
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: microsoft/setup-msbuild@v2
+
+      - uses: NuGet/setup-nuget@v2
+
+      - name: 还原 NuGet 包
+        run: nuget restore WebShell/PDFQFZ.WebShell.csproj
+
+      # ── 免费版（Release，DefineConstants=TRACE）──
+      - name: 编译免费版
+        run: msbuild WebShell/PDFQFZ.WebShell.csproj /t:Rebuild /p:Configuration=Release /p:Platform="AnyCPU" /v:m
+
+      - name: 暂存免费版
+        shell: pwsh
+        run: |
+          $exe = "WebShell/bin/Release/PDFQFZ.WebShell.exe"
+          if (!(Test-Path $exe)) { Write-Error "找不到 $exe"; exit 1 }
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item $exe "dist/free_tmp.exe" -Force
+
+      # ── 赞助版（ReleaseVIP = TRACE;VIP_PAID，开启主题色+徽章+自定义标题）──
+      - name: 编译赞助版
+        run: msbuild WebShell/PDFQFZ.WebShell.csproj /t:Rebuild /p:Configuration=ReleaseVIP /p:Platform="AnyCPU" /v:m
+
+      - name: 改名打包
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          if ([string]::IsNullOrWhiteSpace($tag)) { $tag = "local" }
+          $paidExe = "WebShell/bin/ReleaseVIP/PDFQFZ.WebShell.exe"
+          if (!(Test-Path $paidExe)) { Write-Error "找不到赞助版 $paidExe"; exit 1 }
+          # 此时 bin\ReleaseVIP 下是赞助版刚编出的；免费版已在 dist/free_tmp.exe
+          Copy-Item "dist/free_tmp.exe" "dist/FileStampWatermark_${tag}.exe" -Force
+          Copy-Item $paidExe "dist/FileStampWatermark_${tag}_VIP.exe" -Force
+          Remove-Item "dist/free_tmp.exe" -Force -ErrorAction SilentlyContinue
+          Get-ChildItem dist | ForEach-Object { Write-Host "$($_.Name)  $($_.Length) bytes" }
+
+      - name: 发布到 Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.exe
+          generate_release_notes: true
+          body: |
+            文件批量盖章与水印工具 ${{ github.ref_name }}
+
+            下载说明：
+            - `FileStampWatermark_<tag>.exe` — 免费版（日常使用这个）
+            - `FileStampWatermark_<tag>_VIP.exe` — 赞助版（功能一致，额外开放主题色切换、等级徽章、自定义标题栏文字）
+
+            单文件免安装，双击即可运行；首次运行后会在 EXE 同目录生成「运行组件」等配置文件。
