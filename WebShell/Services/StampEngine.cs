@@ -210,7 +210,7 @@ namespace PDFQFZ.WPF.Services
             {
                 PdfDictionary pageDict = reader.GetPageN(page);
                 if (pageDict == null) return false;
-                byte[] content = reader.GetPageContent(pageDict);
+                byte[] content = PdfReader.GetPageContent(pageDict);
                 if (content == null || content.Length == 0) return false;
 
                 // 目标名称：PdfName.ToString() 形如 "/Im0"，取去掉前导斜杠的部分
@@ -255,7 +255,7 @@ namespace PDFQFZ.WPF.Services
                         {
                             if (content[i] == (byte)'\\') { i += 2; continue; }
                             if (content[i] == (byte)'(') depth++;
-                            else if (content[i] == (byte)') depth--;
+                            else if (content[i] == (byte)')') depth--;
                             i++;
                         }
                         continue;
@@ -1051,7 +1051,6 @@ namespace PDFQFZ.WPF.Services
             double castT = Math.Pow(Math.Abs(cast) / 100.0 * kcast, 1.2);         // 色调非线性
             // 色调：参数 -100~+100，0=原色；负=偏冷(玫红/紫红)、正=偏暖(橘红/橙)；
             // 方向全局一致（同一批印泥同一色调）、幅度按章浮动；红章始终是红，只是冷暖微差
-            double castT = Math.Abs(cast) / 100.0 * kcast;
             double hueShift = cast / 100.0 * 20.0;   // 100 档最多偏 20°（HSV 色相）
             if (amp < 0.005 && gradAmp < 0.005 && whiteLevel < 0.005 && spot <= 0
                 && radialLevel < 0.005 && castT < 0.005)
