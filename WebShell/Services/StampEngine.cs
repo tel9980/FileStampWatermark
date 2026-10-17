@@ -129,6 +129,51 @@ namespace PDFQFZ.WPF.Services
             }
         }
 
+        /// <summary>
+        /// V1.1.1.8：给内容流叠加 PDF 正片叠底（Multiply）混合模式。
+        /// <para>
+        /// 用途：「原文浮于章上」开启时，若该页被整页图片覆盖（扫描件/OCR件/整页底图），
+        /// 章画到文字层之下会被图片完全盖住。此前直接回退为「章压原文」，
+        /// 结果红章把黑字整个遮住——正是用户反馈的「公章盖住文字，效果不好」。
+        /// </para>
+        /// <para>
+        /// 改为在覆盖层（over content）以 Multiply 叠加画章：PDF 混合模式与真实印油一致——
+        /// 章身红油与页面正片叠底，<b>黑字处仍清晰可辨</b>、白纸处呈红色，
+        /// 章的透明处（alpha=0）不改变页面。相比「栅格化+合成+恢复深色像素」，
+        /// 此法保留矢量文字可选中，且不依赖 PDF 内部结构、不增加体积。
+        /// </para>
+        /// <para>
+        /// 注意：混合模式是内容流状态，需在 AddImage 之前设置；对同一内容流后续绘制生效。
+        /// </para>
+        /// </summary>
+        private static void ApplyMultiplyBlend(PdfContentByte cb)
+        {
+            try
+            {
+                if (cb == null) return;
+                cb.SaveState();
+                PdfGState gs = new PdfGState();
+                gs.BlendMode = new PdfName("Multiply"); // iTextSharp 5.x 的 PdfGState.BlendMode 为 PdfName
+                cb.SetGState(gs);
+            }
+            catch
+            {
+                // 混合模式设置失败不应中断盖章：最坏退回默认（章压原文），与改动前行为一致
+            }
+        }
+
+        /// <summary>
+        /// V1.1.1.8：撤销 <see cref="ApplyMultiplyBlend"/> 的混合模式。
+        /// PdfStamper 在同一页内复用同一个 PdfContentByte 对象，且该对象跨页延续，
+        /// 不还原会让 Multiply 泄漏到同页后续绘制（叠字/文字水印）与后续页面的印章上。
+        /// 必须与 ApplyMultiplyBlend 的 SaveState 成对调用。
+        /// </summary>
+        private static void RestoreContentState(PdfContentByte cb)
+        {
+            try { if (cb != null) cb.RestoreState(); }
+            catch { /* 还原失败不影响已写内容 */ }
+        }
+
         // ===================== 盖章核心 =====================
         /// <summary>V1.1.1.5：判断某页是否被整页图片覆盖（扫描件/OCR件/整页底图）。
         /// 衬底模式（GetUnderContent）下章会被这类图片完全盖住→看不见，需自动回落章压字。
@@ -470,8 +515,13 @@ namespace PDFQFZ.WPF.Services
                             bool underSeam = opt.StampUnderText && !PageCoveredByFullImage(pdfReader, page);
                             if (opt.StampUnderText && !underSeam) underFallback = true;
                             waterMarkContent = underSeam ? pdfStamper.GetUnderContent(page) : pdfStamper.GetOverContent(page);
-                            // V1.1.1.6 诊断：骑缝章层决策（StampUnderText=true 时期望 UNDER，被整页图片拦截时回落 OVER）
-                            if (DiagEnabled) try { System.IO.File.AppendAllText(System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "wm_debug.log"), DateTime.Now.ToString("HH:mm:ss.fff") + " [LAYER-SEAM] page=" + page + " StampUnderText=" + opt.StampUnderText + " → " + (underSeam ? "GetUnderContent(章在原文下)" : "GetOverContent(章压原文)") + Environment.NewLine, System.Text.Encoding.UTF8); } catch { }
+                            // V1.1.1.8：衬底被整页图片拦截时不再裸回落「章压原文」——那正是用户反馈的
+                            // 「公章盖住文字」的直接原因。改为叠加 Multiply 混合模式画章：
+                            // 红章油墨与页面正片叠底，黑字在章身下仍清晰可见、白纸处呈红，
+                            // 视觉等同真实盖章（文字保持矢量可选），且不依赖 PDF 内部结构。
+                            if (opt.StampUnderText && !underSeam) ApplyMultiplyBlend(waterMarkContent);
+                            // V1.1.1.6 诊断：骑缝章层决策（StampUnderText=true 时期望 UNDER，被整页图片拦截时回落 OVER+Multiply）
+                            if (DiagEnabled) try { System.IO.File.AppendAllText(System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "wm_debug.log"), DateTime.Now.ToString("HH:mm:ss.fff") + " [LAYER-SEAM] page=" + page + " StampUnderText=" + opt.StampUnderText + " → " + (underSeam ? "GetUnderContent(章在原文下)" : "GetOverContent(章压原文) + Multiply(字仍透出)") + Environment.NewLine, System.Text.Encoding.UTF8); } catch { }
                             int rotation = pdfReader.GetPageRotation(page);
                             iTextSharp.text.Rectangle psize = pdfReader.GetPageSize(page);
                             bool rotLand = (rotation == 90 || rotation == 270);
@@ -534,6 +584,8 @@ namespace PDFQFZ.WPF.Services
                             }
                             image.SetAbsolutePosition(xPos, yPos);
                             waterMarkContent.AddImage(image);
+                            // V1.1.1.8：本页若走过 Multiply 叠加，画完即还原，避免泄漏到后续内容
+                            if (opt.StampUnderText && !underSeam) RestoreContentState(waterMarkContent);
                         }
                         startIndex += tmp;
                     }
@@ -560,6 +612,10 @@ namespace PDFQFZ.WPF.Services
                         bool underPg = opt.StampUnderText && !PageCoveredByFullImage(pdfReader, page);
                         if (opt.StampUnderText && !underPg) underFallback = true;
                         waterMarkContent = underPg ? pdfStamper.GetUnderContent(page) : pdfStamper.GetOverContent(page);
+                        // V1.1.1.8：衬底被整页图片拦截时改用 Multiply 叠加，文字仍透出章身。
+                        // 注意：ApplyMultiplyBlend 含 SaveState，必须与 RestoreContentState 成对——
+                        // 故放在下面的逐章循环内（每枚章单独开关/还原），不可提到此处每页只开一次，
+                        // 否则一页多枚章时 RestoreState 会多于 SaveState，破坏图形状态栈。
                         // V1.1.1.6 诊断：页面章层决策 + 该页叠字/水印框数量（定位"字没浮在章上"是层错还是框没进）
                         if (DiagEnabled) try {
                             int nWm = 0; try { nWm = opt.Watermarks == null ? 0 : opt.Watermarks.Count(b => b != null && (b.Page == 0 || b.Page == page)); } catch { }
@@ -617,8 +673,13 @@ namespace PDFQFZ.WPF.Services
                                 float placementX, placementY;
                                 PDFQFZ.Library.StampAnchorClamp.AnchorFromBBoxCenter(centerX, centerY,
                                     placementWidth, placementHeight, rotateDeg, out placementX, out placementY);
+                                // V1.1.1.8：本枚章若走 Multiply 叠加（衬底被整页图片拦截），画完立即还原，
+                                // 保证同页后续章与文字水印不受连带正片叠底影响（与 RestoreContentState 成对）
+                                bool blendPg = opt.StampUnderText && !underPg;
+                                if (blendPg) ApplyMultiplyBlend(waterMarkContent);
                                 placementImage.SetAbsolutePosition(placementX, placementY);
                                 waterMarkContent.AddImage(placementImage);
+                                if (blendPg) RestoreContentState(waterMarkContent);
                             }
                         }
                     }
