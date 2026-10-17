@@ -59,8 +59,14 @@ window.PdfqModules.sealLib = {
       if(bh<=dispH){ cy=Math.max(bh/2, Math.min(dispH-bh/2, cy)); }
       const left=cx - w/2, top=cy - h/2;
       const tf=(s.randomRotation&&s.rotation)?('rotate('+s.rotation+'deg)'):'';
+      // V1.1.1.9：预览与输出对齐「原文浮于章上」——开启该模式时给章浮层加 CSS 正片叠底，
+      // 与输出端 StampEngine.ApplyMultiplyBlend 同一套原理：黑色文字像素乘任意色仍为黑色（0×x=0），
+      // 故黑字在章身下清晰可辨，视觉等同真实盖章。此前预览恒按普通叠加（章压文字），
+      // 与输出不一致，属所见即所得缺陷。stampStyle 与 gridStampStyle 需同时改（单页/网格两视图）。
+      const blend = this.stampUnderText ? 'multiply' : '';
       return {left:left+'px',top:top+'px',width:w+'px',height:h+'px',
-              transform:tf,'transform-origin':'center center'};
+              transform:tf,'transform-origin':'center center',
+              'mix-blend-mode':blend};
     },
     /* V1.0.0.48：网格视图透出——章样式按每格真实 pt 基准计算（横竖页混排时与单页预览所见一致）。
        与 stampStyle 同一套定位公式，仅基准由 this.pagePts/pageW/pageH 改为传入的该页 ptW/ptH。 */
@@ -83,8 +89,14 @@ window.PdfqModules.sealLib = {
       if(bh<=dispH){ cy=Math.max(bh/2, Math.min(dispH-bh/2, cy)); }
       const left=cx - w/2, top=cy - h/2;
       const tf=(s.randomRotation&&s.rotation)?('rotate('+s.rotation+'deg)'):'';
+      // V1.1.1.9：预览与输出对齐「原文浮于章上」——开启该模式时给章浮层加 CSS 正片叠底，
+      // 与输出端 StampEngine.ApplyMultiplyBlend 同一套原理：黑色文字像素乘任意色仍为黑色（0×x=0），
+      // 故黑字在章身下清晰可辨，视觉等同真实盖章。此前预览恒按普通叠加（章压文字），
+      // 与输出不一致，属所见即所得缺陷。stampStyle 与 gridStampStyle 需同时改（单页/网格两视图）。
+      const blend = this.stampUnderText ? 'multiply' : '';
       return {left:left+'px',top:top+'px',width:w+'px',height:h+'px',
-              transform:tf,'transform-origin':'center center'};
+              transform:tf,'transform-origin':'center center',
+              'mix-blend-mode':blend};
     },
     /* V1.0.0.48：网格透出——骑缝章切片按每格 pt 基准（与 seamStyle 同一公式） */
     gridSeamStyle(sl,dispW,ptW,ptH,tick){ /* V1.0.0.53：第5参 gridCellTick 仅作响应式依赖（resize 触发重渲染），内部不参与计算 */
@@ -105,9 +117,12 @@ window.PdfqModules.sealLib = {
       }
       const dw=width, dh=height;
       const bsw=dw/sl.srcW, bsh=dh/sl.srcH;
+      // V1.1.1.9：骑缝章切片同步正片叠底，与页面章及输出端口径一致（原文浮于章上开启时）
+      const seamBlend = this.stampUnderText ? 'multiply' : '';
       return {
         left:left+'px', top:top+'px', width:width+'px', height:height+'px',
         transform:transform, transformOrigin:'center center',
+        'mix-blend-mode':seamBlend,
         backgroundImage:'url('+this.seamBase.url+')',
         backgroundSize:bsw+'px '+bsh+'px',
         backgroundPosition:(-sl.srcX*bsw)+'px '+(-sl.srcY*bsh)+'px'

@@ -567,9 +567,12 @@ window.PdfqModules.stampActions = {
       }
       const dw=width, dh=height;
       const bsw=dw/sl.srcW, bsh=dh/sl.srcH;
+      // V1.1.1.9：骑缝章切片同步正片叠底，与页面章及输出端口径一致（原文浮于章上开启时）
+      const seamBlend = this.stampUnderText ? 'multiply' : '';
       return {
         left:left+'px', top:top+'px', width:width+'px', height:height+'px',
         transform:transform, transformOrigin:'center center',
+        'mix-blend-mode':seamBlend,
         backgroundImage:'url('+this.seamBase.url+')',
         backgroundSize:bsw+'px '+bsh+'px',
         backgroundPosition:(-sl.srcX*bsw)+'px '+(-sl.srcY*bsh)+'px'
