@@ -275,6 +275,11 @@ namespace PDFQFZ.WebShell.Services
                 ["h0"] = (double)b.H0,
                 ["fsToS"] = (double)b.FsToS,
                 ["wrapLines"] = b.WrapLines ?? new List<string>(),
+                // V1.3.0：补齐两项换行快照——DictToBox 一直会读这两项，但 BoxToDict 此前不写，
+                // 导致「保存方案 → 应用方案」往返后 WrapLineWidths/TopRatios 丢失，
+                // 而同一份数据走 ReplaceAllWatermarks（前端直传全量字段）又保留，两条路径行为不一致。
+                ["wrapLineWidths"] = b.WrapLineWidths ?? new List<float>(),
+                ["wrapLineTopRatios"] = b.WrapLineTopRatios ?? new List<float>(),
                 ["isTextOverlay"] = b.IsTextOverlay // V1.1.1.0：叠字框标记（方案保存/加载不丢）
             };
         }

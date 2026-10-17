@@ -1318,7 +1318,10 @@ namespace PDFQFZ.WPF.Services
                 // 旧键残留不再读取，避免"用户设 0 被旧键覆盖"）
                 p.RandomOffsetXMm = ini.GetIniInt(sec, "randomOffsetXMm", p.RandomOffsetXMm);
                 p.RandomOffsetYMm = ini.GetIniInt(sec, "randomOffsetYMm", p.RandomOffsetYMm);
-                p.RemoveWhite = ini.GetIniInt(sec, "removeWhite", 0) == 1;
+                // V1.3.0：读取默认改用 p.RemoveWhite（类默认=true），与下方 SeamFirstEnabled 同一写法。
+                // 此前硬编码 0，使 StampParams.RemoveWhite=true 成为死代码——任何没有 removeWhite 键的
+                // 印章节读出来都是"不去白"，白底公章 PNG 会把 PDF 正文整段遮死，与 V1.3.0 默认开启去白矛盾。
+                p.RemoveWhite = ini.GetIniInt(sec, "removeWhite", p.RemoveWhite ? 1 : 0) == 1;
                 p.Tolerance = ini.GetIniInt(sec, "tolerance", p.Tolerance);
                 p.MaxSplit = ini.GetIniInt(sec, "maxSplit", p.MaxSplit);
                 p.SeamFirstEnabled = ini.GetIniInt(sec, "seamFirstEnabled", p.SeamFirstEnabled ? 1 : 0) == 1;

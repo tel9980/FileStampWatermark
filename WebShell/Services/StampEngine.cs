@@ -19,6 +19,10 @@ namespace PDFQFZ.WPF.Services
         public string OutputPath;            // 输出目录
         public int QfzType;                  // 骑缝章类型 0加盖/1不加/2单页/3双页/4随意
         public bool RemoveWhite;             // 去除白色背景
+        // V1.3.0：去白容差。此前骑缝章基准图在 PrepareStampResources 里硬编码 20，
+        // 而页面章走 placement.WhiteTransparencyTolerance（来自印章参数 sp.Tolerance）——
+        // 用户把容差调大只对页面章生效，同一张 PDF 上两类章抠白程度不一致。
+        public int WhiteTolerance = 20;     // 去白容差（0-50 有效，见 WhiteTransparencyHelper.ClampTolerance）
         public int Opacity;                  // 印章不透明度
         public int Rotation;                 // 印章旋转角度
         public bool OriginalRotationCrop;    // 旋转切边（qbflag==0）
@@ -86,7 +90,7 @@ namespace PDFQFZ.WPF.Services
                 seamImage = new Bitmap(opt.StampImagePath);
                 if (opt.RemoveWhite)
                 {
-                    seamImage = WhiteTransparencyHelper.Apply(seamImage, 20);
+                    seamImage = WhiteTransparencyHelper.Apply(seamImage, opt.WhiteTolerance);
                 }
                 if (opt.Opacity < 100)
                 {
@@ -1306,7 +1310,7 @@ namespace PDFQFZ.WPF.Services
                 dst.UnlockBits(d2);
                 bigNoise.UnlockBits(dn);
             }
-            src.Dispose();            src.Dispose();
+            src.Dispose();
             bigNoise.Dispose();
             return dst;
         }

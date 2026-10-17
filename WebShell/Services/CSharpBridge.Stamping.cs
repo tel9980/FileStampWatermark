@@ -448,10 +448,13 @@ namespace PDFQFZ.WebShell.Services
                     OutputPath = _renderCacheDir,
                     QfzType = qfzType,
                     RemoveWhite = sp.RemoveWhite,
+                    WhiteTolerance = sp.Tolerance, // V1.3.0：骑缝章去白容差与页面章一致
                     Opacity = sp.Opacity,
                     Rotation = sp.Rotation,
                     OriginalRotationCrop = true, // v2.4.0.76: 固定切边
                     SizeMm = sp.Size,
+                    // V1.3.0：骑缝章预览同样补 StampUnderText，保持与输出口径一致
+                    StampUnderText = sp.StampUnderText,
                     Placements = _stampPlacements,
                     TextureEnabled = sp.TextureQuality,
                     TextureSeed = NewTextureSeed(),

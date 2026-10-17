@@ -92,6 +92,7 @@ namespace PDFQFZ.WebShell.Services
                     OutputPath = outDirT,
                     QfzType = 0,
                     RemoveWhite = sp.RemoveWhite,
+                    WhiteTolerance = sp.Tolerance, // V1.3.0：骑缝章去白容差与页面章一致
                     Opacity = sp.Opacity,
                     Rotation = sp.Rotation,
                     OriginalRotationCrop = true, // v2.4.0.76: 固定切边
@@ -99,6 +100,11 @@ namespace PDFQFZ.WebShell.Services
                     WzType = 0,
                     WzPercent = 0,
                     MaxSplit = 1,
+                    // V1.3.0：预览与输出口径对齐——此前这两条预览路径未传 StampUnderText，
+                    // 默认 false（章压字），而输出路径（RunBatchFiles/GenerateFiles）传
+                    // sp.StampUnderText（V1.3.0 起默认开=字压章）。结果开启"原文浮于章上"后
+                    // 预览恒按章压字、输出按字压章，所见即所得被破坏。
+                    StampUnderText = sp.StampUnderText,
                     Placements = new StampPlacementCollection(),
                     TextureEnabled = sp.TextureQuality,
                     TextureSeed = NewTextureSeed(),
@@ -248,6 +254,7 @@ namespace PDFQFZ.WebShell.Services
                     OutputPath = outDirT,
                     QfzType = 0,
                     RemoveWhite = sp.RemoveWhite,
+                    WhiteTolerance = sp.Tolerance, // V1.3.0：骑缝章去白容差与页面章一致
                     Opacity = sp.Opacity,
                     Rotation = sp.Rotation,
                     OriginalRotationCrop = true, // v2.4.0.76: 固定切边
@@ -255,6 +262,11 @@ namespace PDFQFZ.WebShell.Services
                     WzType = 0,
                     WzPercent = 0,
                     MaxSplit = 1,
+                    // V1.3.0：预览与输出口径对齐——此前这两条预览路径未传 StampUnderText，
+                    // 默认 false（章压字），而输出路径（RunBatchFiles/GenerateFiles）传
+                    // sp.StampUnderText（V1.3.0 起默认开=字压章）。结果开启"原文浮于章上"后
+                    // 预览恒按章压字、输出按字压章，所见即所得被破坏。
+                    StampUnderText = sp.StampUnderText,
                     Placements = new StampPlacementCollection(),
                     TextureEnabled = sp.TextureQuality,
                     TextureSeed = NewTextureSeed(),
@@ -358,7 +370,8 @@ namespace PDFQFZ.WebShell.Services
                     var options = new StampOptions
                     {
                         StampImagePath = stampPath, OutputPath = outDirT, QfzType = qfzType,
-                        RemoveWhite = sp.RemoveWhite, Opacity = sp.Opacity, Rotation = sp.Rotation,
+                        RemoveWhite = sp.RemoveWhite, WhiteTolerance = sp.Tolerance, // V1.3.0：骑缝章去白容差与页面章一致
+                        Opacity = sp.Opacity, Rotation = sp.Rotation,
                         OriginalRotationCrop = true, SizeMm = sp.Size, // v2.4.0.76: 固定切边
                         WzType = wzType, WzPercent = wzPercent, MaxSplit = ms, Placements = col,
 // V1.1.0.3：骑缝章首/尾页章宽可配置
@@ -507,6 +520,7 @@ namespace PDFQFZ.WebShell.Services
                     OutputPath = outDirT,
                     QfzType = qfzType,
                     RemoveWhite = spG.RemoveWhite,
+                    WhiteTolerance = spG.Tolerance, // V1.3.0：骑缝章去白容差与页面章一致
                     Opacity = spG.Opacity,
                     Rotation = spG.Rotation,
                     OriginalRotationCrop = true, // v2.4.0.76: 固定切边

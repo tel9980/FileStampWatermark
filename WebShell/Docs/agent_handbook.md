@@ -36,6 +36,7 @@
 | `scripts\find_exe.py` | 定位软件主程序（EXE） | 封装手册「五、命令格式」的定位步骤 |
 | `scripts\list_seals.py` | 列出印章库内印章 | 封装自检中印章检查步骤 |
 | `scripts\run_task.py` | 执行任务并解析退出码/日志 | 封装手册「五、命令格式」的执行步骤 |
+| `scripts\seal_info.py` | 读取 config.ini 全部参数与每章印章参数（UTF-8 JSON） | 封装自检中 `EXE --stamp-info` 的读取步骤（内部即调用该命令并转码输出） |
 
 #### 两种工作方式（工作方式由用户选择，智能体不替用户决定）
 

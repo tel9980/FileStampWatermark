@@ -585,8 +585,17 @@ namespace PDFQFZ.WebShell.Services
             args.Dpi = I(outCfg, "dpi", 150);
             args.OutFormat = (S(outCfg, "outFormat") ?? "pdf").ToLowerInvariant(); // V1.0.0.48：输出格式多选（逗号分隔，如 pdf,jpg）
             args.Mark = S(outCfg, "mark") ?? "已处理V";
-            args.Pos = I(outCfg, "pos", 0);
-            args.SeqType = I(outCfg, "seqType", 0);
+            // V1.3.0：编号位置 pos 兼容两种写法——文档与 4 个任务模板写的是字符串（"after"/"before"），
+            // 此前用 I() 读整数，Convert.ToInt32("after") 抛 FormatException 被本文件末尾的
+            // catch 吞掉静默回落 0（0 恰为"文件名后"才没暴露）。此处显式支持字符串。
+            args.Pos = (outCfg != null && outCfg.ContainsKey("pos") && outCfg["pos"] is string posStr)
+                ? (string.Equals(posStr, "before", StringComparison.OrdinalIgnoreCase) ? 1 : 0)
+                : I(outCfg, "pos", 0);
+            // V1.3.0：编号类型键名兼容——文档与模板写 "seq"（整数 0/1/2），代码此前读 "seqType"，
+            // 键名不匹配导致 seqType 恒为 0，智能体无论怎么配都只能出数字编号且无任何报错。
+            args.SeqType = outCfg != null && outCfg.ContainsKey("seq")
+                ? I(outCfg, "seq", 0)
+                : I(outCfg, "seqType", 0);
             args.Pad = I(outCfg, "pad", 1);
             args.Ts = B(outCfg, "ts");
             args.TsFormat = S(outCfg, "tsFormat") ?? "yyyyMMdd";
