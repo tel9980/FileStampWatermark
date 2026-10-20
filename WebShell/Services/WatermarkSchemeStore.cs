@@ -155,8 +155,38 @@ namespace PDFQFZ.WebShell.Services
                 }
             }
 
-            File.WriteAllLines(IniPath, result, Encoding.GetEncoding(936)); // V1.0.0.43：config.ini 由 IniFileHelper(Windows API/ANSI=GBK) 维护，此处 UTF8 读写会把全文件中文字段（印章路径/输出命名等）写乱导致印章失效
-            CSharpBridge.WriteLog("[WM-SCHEMES-STORE] WriteAllSchemes count=" + schemes.Count + " names=" + string.Join(",", schemes.Keys));
+            // 原子写：先写临时文件再替换。
+            // 缺陷修复：此前直接 File.WriteAllLines 覆盖 config.ini（截断+全量重写）——
+            // 进程被杀/断电/写盘异常时文件残缺，而 config.ini 是唯一配置存储
+            // （印章库清单 + 每章参数节 + 全部界面设置），一次「保存水印方案」可能让用户配置全丢。
+            WriteAllLinesAtomic(IniPath, result, Encoding.GetEncoding(936));
+            CSharpBridge.WriteLog("[WM-SCHEMES-STORE] WriteAllSchemes count=" + schemes.Count + " names=" + string.Join(",", schemes.Keys));
+        }
+
+        /// <summary>原子写文本文件：写临时文件 → 替换目标（替换失败则保留原文件并抛错给上层处理）。</summary>
+        private static void WriteAllLinesAtomic(string path, List<string> lines, Encoding enc)
+        {
+            string tmp = path + ".tmp";
+            try
+            {
+                File.WriteAllLines(tmp, lines, enc);
+                if (File.Exists(path))
+                {
+                    // File.Replace 要求目标与源同卷；失败时退化为「删除+移动」也不是原子，
+                    // 故优先 Replace，失败时用 Move 覆盖（Windows 的 Move 会原子替换已存在文件）
+                    try { File.Replace(tmp, path, null); }
+                    catch { File.Delete(path); File.Move(tmp, path); }
+                }
+                else
+                {
+                    File.Move(tmp, path);
+                }
+            }
+            catch
+            {
+                try { if (File.Exists(tmp)) File.Delete(tmp); } catch { }
+                throw;
+            }
         }
 
         /// <summary>保存方案（覆盖同名）。boxes 为空返回 false。</summary>

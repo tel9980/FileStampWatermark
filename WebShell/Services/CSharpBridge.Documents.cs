@@ -270,7 +270,7 @@ namespace PDFQFZ.WebShell.Services
             {
                 if (string.IsNullOrWhiteSpace(base64)) return "{\"ok\":false,\"error\":\"空数据\"}";
                 byte[] bytes = Convert.FromBase64String(base64);
-                string safeName = string.IsNullOrWhiteSpace(fileName) ? "drop.pdf" : Path.GetFileName(fileName.Replace('\\', '/'));
+                string safeName = SanitizeDroppedFileName(fileName, "drop.pdf");
                 if (!safeName.ToLowerInvariant().EndsWith(".pdf")) safeName += ".pdf";
                 string dir = Path.Combine(Path.GetTempPath(), "pdfqfz_drop_" + _procTag);
                 Directory.CreateDirectory(dir);

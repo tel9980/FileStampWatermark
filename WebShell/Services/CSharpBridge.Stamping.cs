@@ -41,8 +41,13 @@ namespace PDFQFZ.WebShell.Services
         }
         private string CurrentStampName()
         {
-            return AppConfig.LastSelectedStampNames != null && AppConfig.LastSelectedStampNames.Count > 0
-                ? AppConfig.LastSelectedStampNames[0] : null;
+            // 加锁读取：UI 线程可能正在 SelectStamp 里 Clear+Add，后台批量线程读到
+            // "Count>0 但 [0] 已被清掉" 会抛 ArgumentOutOfRangeException（批量预览随机失败）。
+            lock (AppConfig.StampNamesLock)
+            {
+                return AppConfig.LastSelectedStampNames != null && AppConfig.LastSelectedStampNames.Count > 0
+                    ? AppConfig.LastSelectedStampNames[0] : null;
+            }
         }
         private string CurrentStampPath()
         {
@@ -51,6 +56,12 @@ namespace PDFQFZ.WebShell.Services
             var e = AppConfig.LoadStampEntries()
                 .FirstOrDefault(x => string.Equals(x.DisplayName, name.Trim(), StringComparison.OrdinalIgnoreCase));
             return e != null ? e.Path : null;
+        }
+        /// <summary>当前选中印章的实际路径（供批处理回验：确保选中的是任务指定的图，而非同名旧章）。
+        /// internal——不经 JS 桥暴露（public 桥方法会被 CI 的「桥两端对齐」门禁要求前端调用）。</summary>
+        internal string CurrentStampPathForVerify()
+        {
+            return CurrentStampPath();
         }
         /// <summary>手动盖章：xRatio/yRatio 中心比例(0~1)，page 从 1 起。返回 {ok,id,url,imgW,imgH,sizeMm,x,y,rotation,randomRotation,offsetX,offsetY}。</summary>
         public string AddManualStamp(float xRatio, float yRatio, int page)
@@ -322,10 +333,16 @@ namespace PDFQFZ.WebShell.Services
                     bmp.Save(outPath, System.Drawing.Imaging.ImageFormat.Png);
                 }
             }
-            if (!_fpSizeCache.TryGetValue(fileName, out var wh))
+            // 缓存读写统一加锁：Dictionary 非线程安全，此前读（TryGetValue）不加锁、写加锁，
+            // 并发取章时可能在字典扩容/重建桶的瞬间读到脏数据。
+            (int w, int h) wh;
+            lock (_fpSizeCache)
             {
-                using (var probe = new Bitmap(outPath)) { wh = (probe.Width, probe.Height); }
-                lock (_fpSizeCache) { _fpSizeCache[fileName] = wh; }
+                if (!_fpSizeCache.TryGetValue(fileName, out wh))
+                {
+                    using (var probe = new Bitmap(outPath)) { wh = (probe.Width, probe.Height); }
+                    _fpSizeCache[fileName] = wh;
+                }
             }
             return new Dictionary<string, object>
             {

@@ -127,6 +127,17 @@ jobs:
           set -euo pipefail
           bash "${GITHUB_WORKSPACE}/.github/scripts/check_bridge_align.sh"
 
+      # 6. 技能包 Python 脚本语法检查（智能体调用链路的入口脚本）
+      #    脚本写错语法 → 智能体侧直接执行失败，且不报错（Python 静默退出码 1）
+      - name: 技能包 Python 语法检查
+        run: |
+          set -euo pipefail
+          for f in WebShell/Docs/SkillPackage/file-stamp-watermark/scripts/*.py; do
+            echo "检查 $f..."
+            python3 -m py_compile "$f" || { echo "FAIL: $f"; exit 1; }
+          done
+          echo "✅ 技能包 Python 脚本语法通过"
+
   # ──────────────────────────────────────────────
   # 编译门禁（常驻）
   #

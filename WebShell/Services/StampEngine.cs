@@ -80,7 +80,7 @@ namespace PDFQFZ.WPF.Services
             try
             {
                 // 无盖章、无印章：占位图走"仅输出文件"流程
-                if (opt.QfzType == 1 && opt.Placements.Count == 0
+                if (opt.QfzType == 1 && (opt.Placements == null || opt.Placements.Count == 0)
                     && (string.IsNullOrEmpty(opt.StampImagePath) || !File.Exists(opt.StampImagePath)))
                 {
                     seamImage = new Bitmap(1, 1);
@@ -90,11 +90,15 @@ namespace PDFQFZ.WPF.Services
                 seamImage = new Bitmap(opt.StampImagePath);
                 if (opt.RemoveWhite)
                 {
-                    seamImage = WhiteTransparencyHelper.Apply(seamImage, opt.WhiteTolerance);
+                    // 去白返回新位图，旧图必须释放——否则每次资源准备至少泄漏一张全尺寸 GDI+ 位图
+                    // （批量盖章成百上千次时，GDI 句柄逼近上限，表现为随机的「参数无效/OutOfMemory」）
+                    Bitmap whitened = WhiteTransparencyHelper.Apply(seamImage, opt.WhiteTolerance);
+                    seamImage.Dispose();
+                    seamImage = whitened;
                 }
                 if (opt.Opacity < 100)
                 {
-                    seamImage = SetImageOpacity(seamImage, opt.Opacity);
+                    seamImage = SetImageOpacity(seamImage, opt.Opacity); // 原地改 alpha，返回同一实例（不可在此释放）
                 }
                 // V2.4.0.58：盖章渲染（纹理/色偏）同步应用到骑缝章基准图（对齐页面章 CreatePlacementBitmap 的
                 // 去白→透明度→纹理→旋转 顺序；种子每次资源准备固定一次，骑缝章各页切片纹理一致）
@@ -116,7 +120,9 @@ namespace PDFQFZ.WPF.Services
                 if (opt.Rotation != 0)
                 {
                     int iw = seamImage.Width;
-                    seamImage = RotateImg(seamImage, opt.Rotation, true); // v2.4.0.76: 固定切边（骑缝章与页面章统一）
+                    Bitmap rotated = RotateImg(seamImage, opt.Rotation, true); // v2.4.0.76: 固定切边（骑缝章与页面章统一）
+                    seamImage.Dispose();   // 旋转返回新图，旧图释放（否则批量时同样泄漏）
+                    seamImage = rotated;
                     xzbl = 1f * seamImage.Width / iw;
                 }
                 return true;
@@ -430,15 +436,44 @@ namespace PDFQFZ.WPF.Services
             Action<int, int> pageProgress = null,
             Action<bool> savingIndicator = null)
         {
-            float sfbl = (100f * opt.SizeMm * xzbl * 72) / (25.4f * seamImage.Width);
-
             PdfReader pdfReader = null;
             PdfStamper pdfStamper = null;
             FileStream fileStream = null;
+            // 骑缝章切片位图（subImages 产出 + 旋转副本）——统一在 finally 释放，避免批量时 GDI 句柄耗尽
+            List<Bitmap> seamBitmaps = new List<Bitmap>();
+            bool succeeded = false;
+            // 本次是否真的创建/截断了输出文件——只有创建过才允许在失败时清理，
+            // 否则「同路径保护」等早退分支会把用户已有的文件（可能就是源文件）删掉！
+            bool outputCreated = false;
             try
             {
-                fileStream = new FileStream(outputfilepath, FileMode.Create);
+                // ── 前置校验（全部在开文件之前拦下）────────────────────────────
+                // 缺陷修复 1：sfbl 原在 try 之外用 seamImage.Width 计算，seamImage 为 null 时抛
+                //   NullReferenceException（方法内 catch 抓不到，整批只剩一句「处理过程中发生错误」）。
+                // 缺陷修复 2：FileMode.Create 会先把已存在的目标文件截断为 0 字节——输出路径与源文件
+                //   相同时，原 PDF 在 PdfReader 打开之前就被清零（原文件永久丢失）。
+                if (seamImage == null) { log("印章准备失败：章图为空，无法继续。"); return false; }
+                if (opt.SizeMm <= 0) { log("印章尺寸必须大于 0 毫米。"); return false; }
+                string inFull = inputfilepath, outFull = outputfilepath;
+                try { inFull = Path.GetFullPath(inputfilepath); outFull = Path.GetFullPath(outputfilepath); }
+                catch { }
+                if (!string.IsNullOrEmpty(inFull)
+                    && string.Equals(inFull, outFull, StringComparison.OrdinalIgnoreCase))
+                {
+                    log("文件《" + Path.GetFileName(inputfilepath) + "》输出路径与源文件相同，已跳过以保护原文件。");
+                    return false;
+                }
+                float sfbl = (100f * opt.SizeMm * xzbl * 72) / (25.4f * seamImage.Width);
+                if (float.IsNaN(sfbl) || float.IsInfinity(sfbl) || sfbl <= 0f)
+                {
+                    log("印章缩放比例非法（尺寸 " + opt.SizeMm + "mm），已跳过。");
+                    return false;
+                }
+
+                // 先打开源文件（成功后再创建输出流）——顺序反了会在读失败时把源文件截断
                 pdfReader = new PdfReader(inputfilepath);
+                fileStream = new FileStream(outputfilepath, FileMode.Create);
+                outputCreated = true;
                 pdfStamper = new PdfStamper(pdfReader, fileStream);
 
                 int numberOfPages = pdfReader.NumberOfPages;
@@ -474,6 +509,10 @@ namespace PDFQFZ.WPF.Services
                 {
                     foreach (int page in opt.Placements.DistinctPages(sourcepath))
                     {
+                        // 越界页码过滤——与预览端口径对齐（SeamLayoutCalculator 过滤 p>=1 && p<=pageCount）。
+                        // 缺陷修复：此前不过滤，残留的越界页会让 GetOverContent(page) 抛 IndexOutOfRange，
+                        // 整个文件盖章失败（而预览端安静跳过该页，表现为「预览正常、生成全挂」）。
+                        if (page < 1 || page > numberOfPages) continue;
                         qfzList.Add(page);
                         qfzPages++;
                     }
@@ -493,10 +532,12 @@ namespace PDFQFZ.WPF.Services
                     // 段数向上取整：max 大于等于骑缝章页数时一整段盖完；
                     // 旧公式 qfzPages/max+1 在整除（如 29 页、分割数 29）时会多拆一段，导致效果减半。
                     int ss = (qfzPages + max - 1) / max;
-                    int sy = qfzPages - ss * max / 2;
-                    int sys = sy / ss;
-                    int syy = sy % ss;
-                    int pp = max / 2 + sys;
+                    // 段内页数均分：pp = qfzPages/ss，前 syy 段各多 1 页（总和恒 = qfzPages）。
+                    // 缺陷修复：旧公式 ss*max/2 在 max 为奇数时整除截断，覆盖页数恒少 floor(ss/2) 页——
+                    // 尾部若干页拿不到骑缝章切片（如 5 页/分割数 3 只盖 4 页、7 页/分割数 3 只盖 6 页）。
+                    // max 为偶数时新旧公式完全等价（默认分割数 20 不受影响），预览端口径同步修正。
+                    int pp = qfzPages / ss;
+                    int syy = qfzPages % ss;
                     Bitmap[] nImage;
                     int startIndex = 0;
                     for (int i = 0; i < ss; i++)
@@ -508,6 +549,7 @@ namespace PDFQFZ.WPF.Services
                         }
                         if (tmp <= 0) { startIndex += tmp; continue; } // V390：该段无切片跳过（对齐预览），防 subImages 除零
                         nImage = subImages(seamImage, tmp, opt.SeamFirstEnabled, opt.SeamFirstRatio, opt.SeamLastEnabled, opt.SeamLastRatio);
+                        foreach (Bitmap nb in nImage) { if (nb != null) seamBitmaps.Add(nb); } // 切片位图登记，finally 统一释放
                         for (int y = 0; y < tmp; y++)
                         {
                             int page = qfzList[startIndex + y];
@@ -552,6 +594,7 @@ namespace PDFQFZ.WPF.Services
                             else
                             {
                                 qfzImage = RotateImg(nImage[y], 90, false);
+                                seamBitmaps.Add(qfzImage);   // 旋转副本同样是新位图，一并登记释放
                             }
                             iTextSharp.text.Image image = iTextSharp.text.Image.GetInstance(qfzImage, ImageFormat.Png);
                             float imageW, imageH;
@@ -709,7 +752,12 @@ namespace PDFQFZ.WPF.Services
                         foreach (WatermarkBox box in pageBoxes)
                         {
                             try { DrawTextWatermark(wmContent, box, pageW, pageH); }
-                            catch { /* 单框失败不阻断整文件（坏字体/超界容错） */ }
+                            catch (Exception ex)
+                            {
+                                // 缺陷修复：原实现 catch 后完全静默——字体缺失/文本超长等异常会让水印
+                                // 直接消失，界面与日志都没有任何提示，用户只会认为「程序没盖上」。
+                                try { log("第 " + page + " 页文字水印绘制失败（已跳过该框）：" + ex.Message); } catch { }
+                            }
                         }
                     }
                 }
@@ -717,6 +765,7 @@ namespace PDFQFZ.WPF.Services
                 // V1.1.1.5：整页图片回落提示（衬底会被图片盖住的页已自动改章压字，保证印章可见）
                 if (opt.StampUnderText && underFallback)
                     log("提示：检测到整页图片（扫描件），已自动改用章压字，保证印章可见；文字版 PDF 才支持原文浮于章上。");
+                succeeded = true;   // 成功产出：finally 不再删除该文件
                 return true;
             }
             catch (BadPasswordException)
@@ -737,26 +786,39 @@ namespace PDFQFZ.WPF.Services
                     savingIndicator(true);
                 }
 
-                try
+                // 缺陷修复：原实现把三个 Close 串在一个 try 里——Close 抛异常（如磁盘满/文件被占用）时，
+                // pdfReader 与 fileStream 永远不会关闭（句柄泄漏、输出文件被锁），
+                // 且该异常从 finally 抛出，会把 try 里准备返回的 false 顶掉，调用方拿到的是未知异常。
+                Exception closeError = null;
+                try { if (pdfStamper != null) pdfStamper.Close(); } catch (Exception ex) { closeError = ex; }
+                try { if (pdfReader != null) pdfReader.Close(); } catch { }
+                try { if (fileStream != null) fileStream.Close(); } catch { }
+
+                // 骑缝章切片位图统一释放（必须在 stamper 关闭之后——iText 编码时才读位图）
+                foreach (Bitmap bmp in seamBitmaps)
                 {
-                    if (pdfStamper != null) pdfStamper.Close();
-                    if (pdfReader != null) pdfReader.Close();
-                    if (fileStream != null) fileStream.Close();
+                    try { if (bmp != null) bmp.Dispose(); } catch { }
                 }
-                finally
+                seamBitmaps.Clear();
+
+                if (savingIndicator != null)
                 {
-                    if (savingIndicator != null)
-                    {
-                        savingIndicator(false);
-                    }
+                    savingIndicator(false);
                 }
 
-                if (File.Exists(outputfilepath))
+                if (closeError != null)
+                {
+                    try { log("文件《" + Path.GetFileName(inputfilepath) + "》写盘失败：" + closeError.Message); } catch { }
+                }
+
+                // 失败产物清理：原实现只删 0 字节文件，失败时留下「打不开的半成品 PDF」占用输出目录与版本号。
+                // 注意只清理「本次真的创建过」的输出文件——否则早退分支（如同路径保护）会误删用户已有文件。
+                if (outputCreated && File.Exists(outputfilepath))
                 {
                     try
                     {
                         FileInfo fi = new FileInfo(outputfilepath);
-                        if (fi.Length == 0)
+                        if (!succeeded || fi.Length == 0)
                         {
                             File.Delete(outputfilepath);
                         }
@@ -880,11 +942,15 @@ namespace PDFQFZ.WPF.Services
             if (fs < 0.5f) return;
 
             cb.SaveState();
+            bool textOpen = false;
             try
             {
                 PdfGState gs = new PdfGState(); // iTextSharp PdfGState 不实现 IDisposable：SaveState/RestoreState 管理，无需 using
                 float op = box.Opacity / 100f;
-                float fillOpacity = op < 0.01f ? 0.01f : (op > 1f ? 1f : op);
+                // 缺陷修复：此前把 0（完全透明）钳到 0.01 → 用户设 0% 实际输出 1% 淡字，
+                // 且与图片引擎（允许 0）语义不一致。现在 0 就是 0（完全透明 → 不绘制该框）。
+                float fillOpacity = op < 0f ? 0f : (op > 1f ? 1f : op);
+                if (fillOpacity <= 0f) return;   // 完全透明的水印不落任何内容
                 gs.FillOpacity = fillOpacity;
                 gs.StrokeOpacity = fillOpacity; /* V1.0.0.41：下划线/删除线为 stroke 绘制，StrokeOpacity 此前未设置（默认1=不透明），输出透明度与预览不一致；PdfGState 属性为 write-only 故用局部变量 */
 
@@ -909,6 +975,7 @@ namespace PDFQFZ.WPF.Services
                 float lineWid = fs * 0.05f;                // 下划线/删除线宽（WPF 近似）
 
                 cb.BeginText();
+                textOpen = true;
                 cb.SetFontAndSize(font, fs);
                 cb.SetTextMatrix(0, 0);
                 // 多行整体垂直居中（对齐前端 flex justify-content:center）
@@ -964,8 +1031,15 @@ namespace PDFQFZ.WPF.Services
                     }
                 }
                 cb.EndText();
+                textOpen = false;
             }
-            finally { cb.RestoreState(); }
+            finally
+            {
+                // BT/ET 必须配对：异常发生在 BeginText 之后、EndText 之前时，
+                // 内容流会残留一个未闭合的 BT，生成的 PDF 结构非法（阅读器提示「文档已损坏/需要修复」）。
+                if (textOpen) { try { cb.EndText(); } catch { } }
+                cb.RestoreState();
+            }
         }
 
         // ===================== 图片处理 =====================

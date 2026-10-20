@@ -95,6 +95,25 @@ namespace PDFQFZ.WebShell.Services
             return new JavaScriptSerializer().Serialize(obj);
         }
 
+        /// <summary>拖入文件名清洗：只保留文件名，去掉 Windows 非法文件名字符并限长。
+        /// ':' 必须去掉——否则 "报表.txt:副本.pdf" 会被当成 NTFS 备用数据流（ADS），
+        /// 文件实际写进同名文件的隐藏流里（界面上还看不到），清理也删不掉。</summary>
+        private static string SanitizeDroppedFileName(string fileName, string fallback)
+        {
+            string n = Path.GetFileName((fileName ?? "").Replace('\\', '/'));
+            if (string.IsNullOrWhiteSpace(n)) n = fallback;
+            char[] bad = Path.GetInvalidFileNameChars();
+            System.Text.StringBuilder sb = new System.Text.StringBuilder(n.Length);
+            foreach (char c in n)
+            {
+                if (Array.IndexOf(bad, c) < 0) sb.Append(c);
+            }
+            n = sb.ToString().Trim();
+            if (n.Length == 0) n = fallback;
+            if (n.Length > 100) n = n.Substring(0, 100);
+            return n;
+        }
+
         /// <summary>V2.4.0.21：字符串转 JSON 字符串字面量（含引号转义），供壳层拼事件 JSON 用。</summary>
         public string EscapeJson(string s)
         {

@@ -62,6 +62,23 @@ namespace PDFQFZ.WebShell.Services
             }
             catch (Exception ex) { return "{\"ok\":false,\"error\":" + Json(ex.Message) + "}"; }
         }
+        /// <summary>V1.1.1.6：印章库去重检测（前端启动时调用）。返回 {ok,duplicates:[...]}。
+        /// <para>缺陷修复：前端 index.html 早已调用本方法（'CheckSealLibrary'），但 C# 侧从未实现——
+        /// 每次启动必然 reject 且被前端 .catch 静默吞掉，「印章库去重检测」功能 100% 失效
+        /// （同一文件重复导入 / 同名不同文件这两种财务印章高风险场景都没有任何提示）。</para></summary>
+        public string CheckSealLibrary()
+        {
+            try
+            {
+                List<string> duplicates = AppConfig.DetectDuplicateStamps() ?? new List<string>();
+                foreach (string d in duplicates)
+                {
+                    try { AppLog.Write("[SEAL-DUP] " + d); } catch { }
+                }
+                return "{\"ok\":true,\"duplicates\":" + Json(duplicates) + "}";
+            }
+            catch (Exception ex) { return "{\"ok\":false,\"error\":" + Json(ex.Message) + "}"; }
+        }
         /// <summary>弹多选文件对话框导入印章图片到印章库。返回 {ok,cancel,names:[...],errors:[...]}。</summary>
         public string PickStamps()
         {
@@ -83,6 +100,9 @@ namespace PDFQFZ.WebShell.Services
                         {
                             if (!File.Exists(file)) continue;
                             string defaultName = Path.GetFileNameWithoutExtension(file);
+                            // 清洗显示名：文件名含 ';' 等字符会破坏印章列表与参数节名
+                            defaultName = AppConfig.SanitizeStampDisplayName(defaultName);
+                            if (defaultName.Length == 0) defaultName = "印章";
                             if (defaultName.Length > 30) defaultName = defaultName.Substring(0, 30);
                             string finalName = defaultName;
                             if (AppConfig.StampDisplayNameExists(finalName))
@@ -136,7 +156,9 @@ namespace PDFQFZ.WebShell.Services
                 string newKey = (newName ?? "").Trim();
                 if (newKey.Length == 0) return "err:新名称为空";
                 if (newKey.Length > 30) return "err:名称最长 30 字符";
-                if (newKey.IndexOf('|') >= 0 || newKey.IndexOf(';') >= 0) return "err:名称不能包含 | 或 ;";
+                // 安全加固：'|' ';' 会破坏印章列表与 INI 节名；']' 与换行可造成 config.ini 结构污染
+                if (newKey.IndexOfAny(new char[] { '|', ';', '[', ']', '\r', '\n' }) >= 0)
+                    return "err:名称不能包含 | ; [ ] 或换行";
                 if (!string.Equals(oldName.Trim(), newKey, StringComparison.OrdinalIgnoreCase)
                     && AppConfig.StampDisplayNameExists(newKey)) return "err:已存在同名印章";
                 AppConfig.RenameStampEntry(oldName.Trim(), newKey);
@@ -149,8 +171,11 @@ namespace PDFQFZ.WebShell.Services
         {
             try
             {
-                AppConfig.LastSelectedStampNames.Clear();
-                if (!string.IsNullOrWhiteSpace(name)) AppConfig.LastSelectedStampNames.Add(name.Trim());
+                lock (AppConfig.StampNamesLock)
+                {
+                    AppConfig.LastSelectedStampNames.Clear();
+                    if (!string.IsNullOrWhiteSpace(name)) AppConfig.LastSelectedStampNames.Add(name.Trim());
+                }
                 AppConfig.SaveUiConfig();
                 return "ok";
             }

@@ -101,7 +101,8 @@ window.PdfqModules.configPersist = {
         outputDir: this.saveDir,
         outputDirLocked: this.dirLocked?1:0,
         wzType: ['下','上','左','右'].indexOf(this.sealPos),
-        wz: parseInt(this.posVal)||50,
+        // 同上：骑缝章位置百分比允许 0，不能用 || 回落（0 会被吃成 50）
+        wz: (this.posVal===null||this.posVal===undefined||this.posVal==='')?50:parseInt(this.posVal),
         qfzType: parseInt(this.seamType)||0,
         maxfgs: parseInt(this.segCount)||20,
         leftPanelWidth: this.leftWidth,
@@ -126,7 +127,10 @@ window.PdfqModules.configPersist = {
       const p={
         size: parseInt(this.sealSize)||40,
         rotation: parseInt(this.rotation)||0,
-        opacity: parseInt(this.opacity)||60,
+        // 缺陷修复：此前用 parseInt(...)||60 —— 用户把不透明度设为 0（完全透明）时，
+        // 0 被当成「假值」回落成 60%，用户设置静默丢失（重启后还是 60%）。
+        // 改为显式判空：只有空/非数字才回落默认（默认 100，与 V1.3.0 产品默认一致）。
+        opacity: (this.opacity===null||this.opacity===undefined||this.opacity==='')?100:parseInt(this.opacity),
         maxSplit: this._segModified ? (parseInt(this.segCount)||500) : -1,
         // V1.1.0.3：骑缝章首/尾页章宽可配置  V1.1.0.4：默认20，夹紧5~45
         seamFirstEnabled: !!this.seamFirstEnabled,

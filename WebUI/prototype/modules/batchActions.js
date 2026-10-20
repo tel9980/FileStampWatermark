@@ -76,11 +76,15 @@ window.PdfqModules.batchActions = {
           parseInt(self.batchX)||50, parseInt(self.batchY)||50, true, !!self.batchForce,
           (self.outFormatArr&&self.outFormatArr.length?self.outFormatArr.join(','):'pdf') // V1.0.0.47：输出格式多选 pdf/jpg/png（逗号分隔；后端 GenerateFiles 第 24 参，可选默认 pdf）
         ).then(function(json){
-          const r=JSON.parse(json);
+          let r={}; try{ r=JSON.parse(json); }catch(err){ r={ok:false,error:'生成失败：后端返回数据异常'}; }
         // V2.4.0.70：所见即所得，取消无章确认流程（后端不再返回 needConfirm；无章直接生成无章副本）
         if(r.ok){ self.opHint='正在生成文件，请稍候…'; self.genMerging=false; } /* V1.0.0.78：进入生成入口复位动态点点（写盘阶段由 generate-progress 文案再触发） */
         else { self.generating=false; self.opHint=r.error||'生成失败'; self.addLog(r.error||'生成失败', true); } // V2.4.0.388：生成失败原因进系统日志区（此前只显示操作提示，排查无据）
-      },function(e){ self.generating=false; self.opHint='生成失败：'+e.message; });
+      },function(e){ self.generating=false; self.opHint='生成失败：'+((e&&e.message)||e); });
+      }, function(e){
+        // 缺陷修复：外层此前没有失败回调——ReplaceAllWatermarks 拒绝时 generating 永不复位，
+        // 「生成结果文件」按钮永久 loading，用户只能重启软件（失败路径不发 generate-done 事件）。
+        self.generating=false; self.opHint='生成失败：'+((e&&e.message)||e); self.addLog('生成失败：'+((e&&e.message)||e), true);
       }); // 关闭 ReplaceAllWatermarks 的 .then
     },
     pickOutDir(){

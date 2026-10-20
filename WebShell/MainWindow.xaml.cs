@@ -68,6 +68,120 @@ namespace PDFQFZ.WebShell
             catch { }
         }
 
+        /// <summary>
+        /// WebView2 安全加固：收紧设置 + 导航白名单。
+        /// <para>背景：C# 桥是通过 AddHostObjectToScript 注入的，宿主对象在顶层文档与所有子 frame 都可用，
+        /// 且不随导航自动收回。此前既无导航白名单、也无任何 CoreWebView2Settings 配置，
+        /// 页面一旦被导航到外部站点，外部页面同样能拿到 window.CSharpBridge，
+        /// 可调用「读任意图片 / 写任意目录 / 启动进程」等桥方法（详见《安全审计报告》）。</para>
+        /// <para>现在：只允许本地虚拟主机 https://app/ 与 https://cache/，其余导航一律拦截并交给系统浏览器；
+        /// 关闭开发者工具与默认右键菜单（前端自带右键菜单，不受影响）。</para>
+        /// </summary>
+        private void ApplyWebViewHardening()
+        {
+            if (webView == null || webView.CoreWebView2 == null) return;
+            try
+            {
+                var settings = webView.CoreWebView2.Settings;
+                settings.AreDevToolsEnabled = false;              // 控制台可直接调桥，等于把桥暴露给任何坐机的人
+                settings.AreDefaultContextMenusEnabled = false;   // 前端自带预览区右键菜单（删章等），不需要浏览器默认菜单
+                settings.IsStatusBarEnabled = false;
+                settings.AreDefaultScriptDialogsEnabled = false;
+                settings.IsWebMessageEnabled = true;              // 必须保持开启：壳层事件推送（file-dropped 等）走此通道
+            }
+            catch { }
+            try
+            {
+                webView.CoreWebView2.NavigationStarting += (s, e) =>
+                {
+                    try
+                    {
+                        if (IsLocalAppUrl(e.Uri)) return;
+                        e.Cancel = true;
+                        OpenInSystemBrowser(e.Uri);
+                    }
+                    catch { }
+                };
+                webView.CoreWebView2.NewWindowRequested += (s, e) =>
+                {
+                    try
+                    {
+                        e.Handled = true;   // 不在 WebView2 内开新窗口（否则外部站点会拿到宿主对象）
+                        OpenInSystemBrowser(e.Uri);
+                    }
+                    catch { }
+                };
+            }
+            catch { }
+        }
+
+        /// <summary>是否本地虚拟主机 URL（app:// 前端资源 / cache:// 预览渲染图 / about:blank / data:）。</summary>
+        private static bool IsLocalAppUrl(string url)
+        {
+            if (string.IsNullOrWhiteSpace(url)) return false;
+            return url.StartsWith("https://app/", StringComparison.OrdinalIgnoreCase)
+                || url.StartsWith("https://cache/", StringComparison.OrdinalIgnoreCase)
+                || url.StartsWith("about:blank", StringComparison.OrdinalIgnoreCase)
+                || url.StartsWith("data:", StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>用系统默认浏览器打开外部链接（页脚 GitHub/Gitee 等 target=_blank 链接）。</summary>
+        private static void OpenInSystemBrowser(string url)
+        {
+            if (string.IsNullOrWhiteSpace(url)) return;
+            bool allowed = url.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+                        || url.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
+                        || url.StartsWith("mailto:", StringComparison.OrdinalIgnoreCase);
+            if (!allowed) return;
+            try
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true });
+            }
+            catch { }
+        }
+
+        /// <summary>清理本程序遗留的临时目录（预览渲染图 / 拖入文件的副本 / 调试页 PDF）。
+        /// 目录名尾部是进程 pid——进程仍存活的跳过（多开场景），其余直接删。</summary>
+        private static void CleanupStaleTempDirs()
+        {
+            string[] patterns = { "pdfqfz_web_preview_*", "pdfqfz_drop_*", "pdfqfz_imgdrop_*", "PDFQFZ_*" };
+            try
+            {
+                string temp = Path.GetTempPath();
+                foreach (string pattern in patterns)
+                {
+                    string[] dirs;
+                    try { dirs = Directory.GetDirectories(temp, pattern); } catch { continue; }
+                    foreach (string dir in dirs)
+                    {
+                        try
+                        {
+                            string name = Path.GetFileName(dir);
+                            int sep = name.LastIndexOf('_');
+                            if (sep > 0 && sep < name.Length - 1)
+                            {
+                                int pid;
+                                if (int.TryParse(name.Substring(sep + 1), out pid))
+                                {
+                                    try
+                                    {
+                                        using (System.Diagnostics.Process alive = System.Diagnostics.Process.GetProcessById(pid))
+                                        {
+                                            if (alive != null) continue;   // 进程仍在运行（多开）→ 跳过
+                                        }
+                                    }
+                                    catch { /* 进程已退出 → 可删 */ }
+                                }
+                            }
+                            Directory.Delete(dir, true);
+                        }
+                        catch { }
+                    }
+                }
+            }
+            catch { }
+        }
+
         private async void OnLoadedAsync(object sender, RoutedEventArgs e)
         {
             try
@@ -86,6 +200,8 @@ namespace PDFQFZ.WebShell
                 try { System.IO.Directory.CreateDirectory(wv2Dir); } catch { wv2Dir = null; }
                 var wv2Env = wv2Dir != null ? await Microsoft.Web.WebView2.Core.CoreWebView2Environment.CreateAsync(null, wv2Dir) : null;
                 if (wv2Env != null) await webView.EnsureCoreWebView2Async(wv2Env); else await webView.EnsureCoreWebView2Async();
+                // 安全加固：收紧 WebView2 设置并加导航白名单（详见下方注释）
+                try { ApplyWebViewHardening(); } catch { }
                 // V2.4.0.39：WebView2 加载前背景设界面底色（#F5F6FA），避免启动"大白窗"刺眼
                 try { webView.DefaultBackgroundColor = System.Drawing.Color.FromArgb(255, 245, 246, 250); } catch { }
                 // V2.4.0.17→回退：不禁用 WebView2 外部拖放（实测 AllowExternalDrop=false 后 HwndHost 拦截拖放消息，
@@ -101,6 +217,10 @@ namespace PDFQFZ.WebShell
                 string cacheDir = Path.Combine(Path.GetTempPath(), "pdfqfz_web_preview_" + System.Diagnostics.Process.GetCurrentProcess().Id);
                 try
                 {
+                    // 清理历史遗留的临时目录（预览渲染图 / 拖入的文件副本）——
+                    // 此前每次启动都新建一个带 pid 的目录且从不清理旧目录，
+                    // 用户文档整页渲染图与拖入的原文会长期残留在 %TEMP%（同机其它进程可读），磁盘也持续累积。
+                    CleanupStaleTempDirs();
                     Directory.CreateDirectory(cacheDir);
                     foreach (var f in Directory.GetFiles(cacheDir, "page_*.png")) File.Delete(f);
                 }

@@ -118,11 +118,21 @@ namespace PDFQFZ.Library
 
         // ==================== 新版（V132 自定义输出文件名后缀） ====================
 
-        public static string GetNextOutputPath(string destinationDirectory, string sourceFilePath, OutputNamingOptions options)
+        public static string GetNextOutputPath(string destinationDirectory, string sourceFilePath, OutputNamingOptions options, ICollection<string> reservedNames = null)
         {
             IEnumerable<string> existingFileNames = Directory.Exists(destinationDirectory)
                 ? Directory.EnumerateFiles(destinationDirectory).Select(Path.GetFileName)
                 : Enumerable.Empty<string>();
+
+            // 并行批量时同名源文件（不同子目录）会算出同一个输出名——把「本批次已占用的名字」
+            // 一并计入版本扫描，参与匹配的名字会顺延到下一个版本号，避免后写覆盖先写。
+            if (reservedNames != null && reservedNames.Count > 0)
+            {
+                existingFileNames = existingFileNames.Concat(reservedNames.Select(n =>
+                {
+                    try { return Path.GetFileName(n) ?? ""; } catch { return ""; }
+                }));
+            }
 
             string fileName = GetNextFileName(sourceFilePath, options, existingFileNames);
             string outputPath = Path.Combine(destinationDirectory, fileName);
@@ -143,7 +153,7 @@ namespace PDFQFZ.Library
         public static string GetNextFileName(string sourceFilePath, OutputNamingOptions options, IEnumerable<string> existingFileNames)
         {
             options = options ?? new OutputNamingOptions();
-            string mark = (options.Mark ?? "").Trim();
+            string mark = SanitizeMark(options.Mark);
             int seqType = NormalizeSeqType(options.SeqType);
             int pad = NormalizePad(options.Pad);
 
@@ -212,6 +222,29 @@ namespace PDFQFZ.Library
             return options.BeforeName
                 ? body + "_" + sourceName + extension
                 : sourceName + "_" + body + extension;
+        }
+
+        /// <summary>输出命名标记清洗：去掉 Windows 非法文件名字符（其中含 '\' '/' ':' '*' '?' '"' '&lt;' '&gt;' '|'）并限长。
+        /// <para>缺陷修复：用户自定义的「输出文件名标记」此前原样拼进文件名——
+        /// 填 "已盖章/2024" 会拼出带目录分隔符的名字，产物直接写到输出目录之外；
+        /// 填 "a*b" 之类非法字符则整批文件因「文件名非法」全部失败（错误信息还是底层的 ArgumentException）。
+        /// 同文件的 FormatTimestamp 早已做了非法字符清洗，此处补齐口径不一致的一环。</para>
+        /// </summary>
+        private static string SanitizeMark(string mark)
+        {
+            string s = (mark ?? "").Trim();
+            if (s.Length == 0) return s;
+            char[] invalid = Path.GetInvalidFileNameChars();
+            System.Text.StringBuilder sb = new System.Text.StringBuilder(s.Length);
+            foreach (char c in s)
+            {
+                if (c < 32) continue;                       // 控制字符
+                if (Array.IndexOf(invalid, c) >= 0) continue;  // 非法文件名字符（含路径分隔符）
+                sb.Append(c);
+            }
+            s = sb.ToString().Trim();
+            if (s.Length > 40) s = s.Substring(0, 40);      // 限长防路径过长
+            return s;
         }
 
         /// <summary>把源文件名中已带的本规则旧标记段剥离（如 xxx_已盖章V1 / 已盖章V1_xxx / xxx_已盖章20260911_1）。</summary>

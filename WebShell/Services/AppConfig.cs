@@ -74,6 +74,12 @@ namespace PDFQFZ.WPF.Services
         public static string LastStampImagePath = ""; // 上次选择的印章路径（WPF 新增，便于记忆）
         /// <summary>印章勾选集合（显示名，按勾选顺序；多选随机盖章使用）。</summary>
         public static List<string> LastSelectedStampNames = new List<string>();
+
+        /// <summary>LastSelectedStampNames 的访问锁。
+        /// 缺陷修复：该列表此前在 UI 线程写（SelectStamp 的 Clear+Add）、后台批量线程读（CurrentStampName），
+        /// 且读法是 "Count &gt; 0 后取 [0]" 两步——两步之间若 UI 线程正好 Clear，就会抛
+        /// ArgumentOutOfRangeException，表现为「批量预览随机失败」且错误信息是原始 .NET 异常。</summary>
+        public static readonly object StampNamesLock = new object();
         public static int WindowWidth = 1280;
         public static int WindowHeight = 840;
         public static int WindowLeft = -1;
@@ -325,13 +331,16 @@ namespace PDFQFZ.WPF.Services
                 LastStampImagePath = Content(ini, "lastStampImagePath", LastStampImagePath);
                 {
                     string selRaw = Content(ini, "lastSelectedStampNames", "");
-                    LastSelectedStampNames = new List<string>();
-                    if (!string.IsNullOrWhiteSpace(selRaw))
+                    lock (StampNamesLock)
                     {
-                        foreach (string n in selRaw.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries))
+                        LastSelectedStampNames = new List<string>();
+                        if (!string.IsNullOrWhiteSpace(selRaw))
                         {
-                            string nm = n.Trim();
-                            if (nm.Length > 0) LastSelectedStampNames.Add(nm);
+                            foreach (string n in selRaw.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries))
+                            {
+                                string nm = n.Trim();
+                                if (nm.Length > 0) LastSelectedStampNames.Add(nm);
+                            }
                         }
                     }
                 }
@@ -571,7 +580,15 @@ namespace PDFQFZ.WPF.Services
                 ini.WriteIniString(Section, "outputNameTsFormat", OutputNameTsFormat ?? "yyyyMMdd");
                 ini.WriteIniString(Section, "lastStampImagePath", LastStampImagePath);
                 if (LastSelectedStampNames != null && LastSelectedStampNames.Count > 0)
-                    ini.WriteIniString(Section, "lastSelectedStampNames", string.Join(";", LastSelectedStampNames));
+                {
+                    lock (StampNamesLock)
+                    {
+                        if (LastSelectedStampNames != null && LastSelectedStampNames.Count > 0)
+                            ini.WriteIniString(Section, "lastSelectedStampNames", string.Join(";", LastSelectedStampNames));
+                        else
+                            ini.WriteIniString(Section, "lastSelectedStampNames", "");
+                    }
+                }
                 else
                     ini.WriteIniString(Section, "lastSelectedStampNames", "");
                 ini.WriteIniString(Section, "contextKeywords", ContextKeywords ?? "");
@@ -747,7 +764,10 @@ namespace PDFQFZ.WPF.Services
                 List<StampEntry> entries = LoadStampEntries();
                 entries.RemoveAll(e => string.Equals(e.DisplayName, key, StringComparison.OrdinalIgnoreCase));
                 SaveStampEntriesInternal(entries);
-                LastSelectedStampNames.RemoveAll(n => string.Equals(n, key, StringComparison.OrdinalIgnoreCase));
+                lock (StampNamesLock)
+                {
+                    LastSelectedStampNames.RemoveAll(n => string.Equals(n, key, StringComparison.OrdinalIgnoreCase));
+                }
                 RemoveStampParamsSection(key);
 
                 // 删除该章库内图片（若为库内文件）
@@ -788,11 +808,14 @@ namespace PDFQFZ.WPF.Services
                     RemoveStampParamsSection(oldName);
                 }
                 // 勾选集合同步
-                for (int i = 0; i < LastSelectedStampNames.Count; i++)
+                lock (StampNamesLock)
                 {
-                    if (string.Equals(LastSelectedStampNames[i], oldName, StringComparison.OrdinalIgnoreCase))
+                    for (int i = 0; i < LastSelectedStampNames.Count; i++)
                     {
-                        LastSelectedStampNames[i] = newName;
+                        if (string.Equals(LastSelectedStampNames[i], oldName, StringComparison.OrdinalIgnoreCase))
+                        {
+                            LastSelectedStampNames[i] = newName;
+                        }
                     }
                 }
             }
@@ -870,10 +893,18 @@ namespace PDFQFZ.WPF.Services
 
                 if (!string.IsNullOrWhiteSpace(raw))
                 {
-                    foreach (string item in raw.Split(StampPathsSeparator, StringSplitOptions.RemoveEmptyEntries))
+                    // 容错读回：旧数据里显示名含 ';' 时该条目被 ';' 拆成多段（读回即错位）。
+                    // 本段没有 '|' 而下一段有 '|' → 本段是被拆掉的名字碎片，合并回来。
+                    string[] segs = raw.Split(StampPathsSeparator, StringSplitOptions.RemoveEmptyEntries);
+                    for (int i = 0; i < segs.Length; i++)
                     {
-                        string seg = item.Trim();
+                        string seg = segs[i].Trim();
                         if (seg.Length == 0) continue;
+                        if (seg.IndexOf('|') < 0 && i + 1 < segs.Length && segs[i + 1].IndexOf('|') > 0)
+                        {
+                            seg = seg + ";" + segs[i + 1].Trim();
+                            i++;
+                        }
                         string displayName;
                         string path;
                         int bar = seg.IndexOf('|');
@@ -892,6 +923,14 @@ namespace PDFQFZ.WPF.Services
                         {
                             result.Add(new StampEntry(displayName, path));
                         }
+                    }
+                }
+                // 批处理运行期的内存条目（智能体任务的印章图，不落盘）
+                lock (RuntimeStampEntries)
+                {
+                    foreach (StampEntry e in RuntimeStampEntries)
+                    {
+                        if (e != null && !string.IsNullOrWhiteSpace(e.Path)) result.Add(e);
                     }
                 }
             }
@@ -915,6 +954,10 @@ namespace PDFQFZ.WPF.Services
                     string name = string.IsNullOrWhiteSpace(e.DisplayName)
                         ? Path.GetFileNameWithoutExtension(e.Path)
                         : e.DisplayName.Trim();
+                    // 写入前清洗显示名：name|path 用 ';' 分隔，名字里带 ';' 会把整条列表写坏
+                    name = SanitizeStampDisplayName(name);
+                    if (name.Length == 0) name = SanitizeStampDisplayName(Path.GetFileNameWithoutExtension(e.Path));
+                    if (name.Length == 0) continue;
                     segs.Add(name + "|" + e.Path.Trim());
                 }
                 ini.WriteIniString(Section, StampPathsIniKey, string.Join(";", segs));
@@ -1277,7 +1320,31 @@ namespace PDFQFZ.WPF.Services
 
         private static string StampParamSection(string stampFileName)
         {
-            return "stamp_" + (string.IsNullOrWhiteSpace(stampFileName) ? "default" : stampFileName.Trim());
+            // 安全加固：显示名来自用户输入/文件名，此前直接拼成 INI 节名。
+            // 含 ']' 或 CR/LF 的名字会让 WritePrivateProfileString 写出畸形节结构，
+            // 轻则参数记错位置，重则污染 config.ini 的其它节（配置注入）。
+            // 与水印方案名（WatermarkSchemeStore.SanitizeName）保持同一套清洗规则。
+            string n = (stampFileName ?? "").Trim();
+            char[] bad = { '=', ';', '[', ']', '\r', '\n', '\0' };
+            foreach (char c in bad) n = n.Replace(c.ToString(), "");
+            n = n.Trim();
+            if (n.Length > 60) n = n.Substring(0, 60);
+            return "stamp_" + (n.Length == 0 ? "default" : n);
+        }
+
+        /// <summary>印章显示名清洗：去掉会破坏 config.ini 列表（name|path 用 ';' 分隔）与节名解析的字符，
+        /// 并限长 30 字符。所有「显示名来自用户输入或文件名」的入口都要过这里。
+        /// 缺陷修复：文件名含 ';'（如 "a;b.png"）时，显示名 "a;b" 写入 stampPaths 后，
+        /// 读回时整条列表被拆坏（其余印章全部丢失/错位）。</summary>
+        public static string SanitizeStampDisplayName(string name)
+        {
+            string n = (name ?? "").Trim();
+            if (n.Length == 0) return n;
+            char[] bad = { ';', '|', '=', '[', ']', '\r', '\n', '\0' };
+            foreach (char c in bad) n = n.Replace(c.ToString(), "");
+            n = n.Trim();
+            if (n.Length > 30) n = n.Substring(0, 30);
+            return n;
         }
 
         /// <summary>某显示名（或文件名）是否已有保存的参数记录。</summary>
@@ -1356,12 +1423,26 @@ namespace PDFQFZ.WPF.Services
         /// <summary>读取某印章参数（key=显示名）；无记录返回默认参数（V2.3.2.14：移除旧文件名节迁移）。</summary>
         public static StampParams LoadStampParams(string stampFileName)
         {
+            // 批处理（智能体调用）运行期覆盖：任务 JSON 给出的印章参数只在本次进程内生效，
+            // 不写回用户的 config.ini——手册铁律「config.ini 只能读、不能改」。
+            // 缺陷修复：此前 CLI 走 SaveStampParams + SaveUiConfig，把任务参数永久写进用户配置
+            // （还会改写全局 size/rotation/opacity），用户界面里为该章配好的参数被覆盖。
+            StampParams ov = RuntimeStampParamsOverride;
+            if (ov != null) return ov;
+
             if (string.IsNullOrWhiteSpace(stampFileName))
             {
                 return new StampParams();
             }
             return LoadStampParamsCore(stampFileName.Trim());
         }
+
+        /// <summary>批处理运行期的印章参数覆盖（内存态，不落盘）。GUI 路径恒为 null。</summary>
+        public static StampParams RuntimeStampParamsOverride = null;
+
+        /// <summary>批处理运行期的印章条目（内存态，不落盘）。
+        /// 智能体任务指定的印章图不应被写进用户印章库（手册铁律：config.ini 只读）。</summary>
+        public static readonly List<StampEntry> RuntimeStampEntries = new List<StampEntry>();
 
         /// <summary>删除某 key 的参数节（WritePrivateProfileString 传 null 键删除整节）。</summary>
         public static void RemoveStampParamsSection(string key)

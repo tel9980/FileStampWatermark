@@ -5,7 +5,7 @@
  * ------------------------------------------------------------
  * 用法：
  *   Bridge.invoke('Ping')                 -> Promise，调 C# 方法
- *   Bridge.invoke('Method', arg1, arg2)   -> Promise，带参数
+ *   Bridge.invoke('方法名', arg1, arg2)   -> Promise，带参数
  *   Bridge.on('event-name', fn)           -> 订阅 C# 主动推送事件
  * ============================================================ */
 (function () {
