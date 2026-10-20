@@ -148,11 +148,12 @@ jobs:
   #   StampEngine.cs:213   用实例引用调用 static 的 GetPageContent（CS0176）
   #   StampEngine.cs:1054  castT 重复声明（CS0128）
   #
-  # 双档编译（免费 Release / 赞助 ReleaseVIP=TRACE;VIP_PAID），与发布流程一致——
-  # 赞助档走 #if VIP_PAID 编译常量，只编免费档会漏掉赞助档独有的编译问题。
+  # 单档编译（免费 Release），与发布流程一致——
+  # 2026-10-20 起不再发布赞助版（VIP），故门禁只编免费档；
+  # 源码里的 #if VIP_PAID 分支仍保留，将来若恢复赞助版发布，把 ReleaseVIP 编译步骤加回来即可。
   # ──────────────────────────────────────────────
   build:
-    name: 编译门禁（windows / 双档）
+    name: 编译门禁（windows）
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
@@ -179,27 +180,8 @@ jobs:
           $exe = "WebShell/bin/Release/PDFQFZ.WebShell.exe"
           if (!(Test-Path $exe)) { Write-Error "编译未产出 $exe"; exit 1 }
           $f = Get-Item $exe
+          if ($f.Length -lt 1MB) { Write-Error "EXE 体积异常（$($f.Length) bytes）"; exit 1 }
           Write-Host ("免费版 EXE: {0}  {1:N0} bytes" -f $f.Name, $f.Length)
-
-      - name: 编译赞助版（ReleaseVIP / TRACE;VIP_PAID）
-        run: >
-          msbuild WebShell/PDFQFZ.WebShell.csproj /t:Rebuild
-          /p:Configuration=ReleaseVIP /p:Platform="AnyCPU" /p:ErrorReport=None /v:m
-
-      - name: 校验赞助版 EXE
-        shell: pwsh
-        run: |
-          $exe = "WebShell/bin/ReleaseVIP/PDFQFZ.WebShell.exe"
-          if (!(Test-Path $exe)) { Write-Error "编译未产出 $exe"; exit 1 }
-          $f = Get-Item $exe
-          Write-Host ("赞助版 EXE: {0}  {1:N0} bytes" -f $f.Name, $f.Length)
-          # 两档应是不同二进制（DefineConstants 不同）；相同说明某一档的档位宏没生效
-          $free = "WebShell/bin/Release/PDFQFZ.WebShell.exe"
-          if ((Get-FileHash $free).Hash -eq (Get-FileHash $exe).Hash) {
-            Write-Error "免费版与赞助版哈希相同——某一档的 DefineConstants 未生效"
-            exit 1
-          }
-          Write-Host "双档产出为不同二进制，档位宏生效"
 
       # 只做校验、不上传 EXE 产物：交付由 release.yml 打 tag 时统一产出。
       # 每次 push 都传 EXE 无必要，也会让 .exe 落到 Actions 存储——
@@ -211,6 +193,5 @@ jobs:
           name: build-logs
           path: |
             WebShell/obj/Release/**/*.binlog
-            WebShell/obj/ReleaseVIP/**/*.binlog
           if-no-files-found: ignore
           retention-days: 7
