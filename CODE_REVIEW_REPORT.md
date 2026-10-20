@@ -13,6 +13,7 @@
 |------|------|
 | 三线并行静态审计 | ① WebView2 桥接层 + 前端安全　② 盖章/水印核心引擎 + PDFQFZ 库　③ 批量/CLI/配置持久化 + 前端业务逻辑 |
 | **本地真编译验证** | 环境无 .NET SDK 且 WPF/.NET Framework 4.7.2 只能在 Windows 编译，故自建 `net472` 校验工程（`Microsoft.NETFramework.ReferenceAssemblies` + WebView2/iTextSharp/PdfiumViewer 依赖 + XAML 生成代码桩），**本轮所有 C# 改动均已通过真实编译（0 error）** |
+| **仓库 CI 验证** | PR #1 的 CI 全绿：JS 语法 / HTML 内联脚本 / 白名单守卫 / **桥方法两端对齐（新双向门禁）** / **技能包 Python 语法（新门禁）** / **Windows 双档编译（Release + ReleaseVIP，含真实 csproj + XAML 编译 + Costura）** |
 | 门禁脚本自测 | 加固后的 `check_bridge_align.sh` 本地跑通，并用「删掉 C# 侧方法」反向验证它确实能抓出原有缺陷 |
 | 未覆盖 | 运行时行为（需 Windows + WebView2 实机）：UI 交互、真实 PDF 渲染效果、EXE 打包 |
 
