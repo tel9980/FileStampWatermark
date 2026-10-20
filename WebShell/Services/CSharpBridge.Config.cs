@@ -85,12 +85,7 @@ namespace PDFQFZ.WebShell.Services
                 ["foldName"] = AppConfig.FoldName,
                 ["lastStampImagePath"] = AppConfig.LastStampImagePath ?? "",
                 ["leftPanelWidth"] = AppConfig.LeftPanelWidth,
-                ["badgeDebug"] = AppConfig.BadgeDebug, // V2.4.0.397
-                ["enableTheme"] = AppConfig.EnableTheme, // V2.4.0.400
-                ["enableCustomTitle"] = AppConfig.EnableCustomTitle, // V2.4.0.407：12.9 档自定义标题开关
                 ["version"] = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version.ToString(), // V1.0.0.14：完整版本号（前端关于/使用说明展示，反馈定位用）
-                ["tierActive"] = AppConfig.TierActive,     // V2.4.0.407：授权有效（满 2 台 false=免费效果）
-                ["themeColor"] = AppConfig.ThemeColor,      // V2.4.0.400
             };
             return Json(d);
         }
@@ -261,33 +256,6 @@ namespace PDFQFZ.WebShell.Services
         {
             AppLog.Write("[DIAG] " + (msg ?? ""));
             return "{\"ok\":true}";
-        }
-        /// <summary>V2.4.0.405：写收费版 vip.ini 配置（themeColor/titleSuffix 部分键，保留其他键；无 BOM UTF-8 文本写回）。
-        /// 调用方：前端 themePick（主题色持久化到 vip.ini，修复重启回蓝）、自定义标题保存。返回 "ok" 或 "err:..."。</summary>
-        public string SetVipConfig(string json)
-        {
-            try
-            {
-                if (string.IsNullOrWhiteSpace(json)) return "err:参数为空";
-                var d = new System.Web.Script.Serialization.JavaScriptSerializer().Deserialize<System.Collections.Generic.Dictionary<string, string>>(json);
-                if (d == null) return "err:参数错误";
-                if (AppConfig.VipTier <= 0) return "err:未开通收费功能";
-                if (!AppConfig.TierActive) return "err:授权超限";
-                if (d.ContainsKey("themeColor") && AppConfig.EnableTheme)
-                {
-                    AppConfig.ThemeColor = d["themeColor"];
-                    AppConfig.SaveTierKey("themeColor", d["themeColor"]);
-                }
-                if (d.ContainsKey("titleSuffix"))
-                {
-                    if (AppConfig.VipTier < 3) return "err:当前版本不支持自定义标题";
-                    AppConfig.TitleSuffix = d["titleSuffix"];
-                    AppConfig.SaveTierKey("titleSuffix", d["titleSuffix"]);
-                }
-                System.Windows.Application.Current.Dispatcher.Invoke(() => { PDFQFZ.WebShell.MainWindow.RefreshTitle(); });
-                return "ok";
-            }
-            catch (Exception ex) { return "err:" + ex.Message; }
         }
     }
 }

@@ -7,9 +7,6 @@
 <script src="lib/vue.global.prod.js"></script>
 <script src="lib/element-plus.min.js"></script>
 <script src="lib/icons.iife.min.js"></script>
-<script>/* V2.4.0.402 收费功能开关统一由 vip.ini（运行组件\vip.ini，[vip] 节）经 C# GetUiConfig → applyUiConfig 下发：
- * enableTheme/themeColor → themeInit；badgeDebug → badgeInit。index.html 不再持有编译常量（避免覆盖 C# 下发值）。
- * 免费版无 vip.ini → enableTheme=false 固定蓝、badgeEnabled=false 只计数不渲染。*/</script>
 <script src="bridge.js"></script>
 <script>/* V1.0.0.14：前端 JS 全局错误/未处理 Promise 拒绝 → 写入统一 app_log.log（经桥 LogLine），补前端异常回溯盲区 */
 window.addEventListener('error',function(e){ try{ if(window.Bridge&&window.Bridge.invoke){ window.Bridge.invoke('LogLine','[JS-ERROR] '+(e.message||'')+' @'+(e.filename||'')+':'+(e.lineno||'')); } }catch(_e){} });
@@ -21,10 +18,7 @@ window.addEventListener('unhandledrejection',function(e){ try{ if(window.Bridge&
 <script src="modules/uiLayout.js"></script>
 <script src="modules/configPersist.js"></script>
 <script src="modules/watermark.js"></script>
-    <script src="modules/imageWatermark.js"></script>
-    <script src="vendor/localforage.min.js"></script>
-    <script src="modules/badge.js"></script>
-    <script src="modules/theme.js"></script>
+<script src="modules/imageWatermark.js"></script>
 <style>
 /* ============ UI规范令牌 → CSS 变量 ============ */
 :root{
@@ -535,22 +529,11 @@ button,input,select,textarea{font-family:inherit}
 .wm-ctx-item:hover{background:#f5f7fa}
 .wm-ctx-item.danger{color:#f56c6c}
 .wm-ctx-item.danger:hover{background:#fef0f0}
-/* ============ V2.4.0.397 等级徽章彩蛋 ============ */
-.tb-badge{display:inline-flex;align-items:center;gap:1px;padding:2px 6px;cursor:default;border-radius:4px;transition:background .2s}
-.tb-badge:hover{background:var(--primary-soft)}
-.tb-badge svg{display:block}
-.badge-tip{font-size:12px;line-height:1.7;min-width:150px}
-.badge-tip div{white-space:nowrap}
-.badge-upgrade-float{position:fixed;left:50%;top:55%;transform:translate(-50%,-50%) scale(.6);z-index:9999;background:linear-gradient(135deg,var(--primary),var(--primary-hover));color:#fff;font-size:16px;font-weight:600;padding:12px 22px;border-radius:10px;box-shadow:0 6px 20px var(--primary-ring);opacity:0;display:none;pointer-events:none;transition:transform .7s ease,opacity .7s ease}
-/* V2.4.0.400/403：主题色切换下拉（仅付费版渲染） */
-.theme-switch-btn{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border:1px solid #dcdfe6;border-radius:6px;background:#fff;height:28px;font-size:12px;color:#1F2329;cursor:pointer;transition:border-color .2s}
-.theme-switch-btn:hover{border-color:var(--primary)}
+/* 下拉选项高亮（视图模式：单页/双页/四页/八页） */
+.theme-opt-active{color:var(--primary);font-weight:600}
 .tb-grid-btn{display:inline-flex;align-items:center;gap:2px;padding:3px 10px;border:1px solid #dcdfe6;border-radius:6px;background:#fff;height:28px;font-size:12px;color:#1F2329;cursor:pointer;transition:border-color .2s;flex-shrink:0}
 .tb-grid-btn:hover{border-color:var(--primary)}
 .tb-grid-btn.on{border-color:var(--primary);color:var(--primary)}
-.theme-opt-dot{display:inline-block;width:12px;height:12px;border-radius:50%;margin-right:6px;vertical-align:-1px}
-.theme-opt-active{color:var(--primary);font-weight:600}
-.badge-upgrade-float.bu-show{opacity:1;transform:translate(-50%,-50%) scale(1)}
 
 </style>
 </head>
@@ -597,20 +580,6 @@ button,input,select,textarea{font-family:inherit}
         <el-icon><component :is="isFullscreen?'Close':'FullScreen'"></component></el-icon>
         <span>{{ isFullscreen?'恢复':'全屏' }}</span>
       </div>
-      <!-- V2.4.0.400/403：主题色切换下拉（enableTheme=false 免费版不渲染；付费版右上角下拉切换并持久化） -->
-      <el-tooltip v-if="enableTheme" content="切换主题色" placement="bottom" :show-after="200">
-        <el-dropdown trigger="click" @command="themePick">
-          <span class="theme-switch-btn"><el-icon><component :is="'Brush'"></component></el-icon>主题色</span>
-          <template #dropdown>
-            <el-dropdown-menu>
-              <el-dropdown-item command="blue" :class="{ 'theme-opt-active': themeColor==='blue' }"><span class="theme-opt-dot" style="background:#1677FF"></span>蓝色</el-dropdown-item>
-              <el-dropdown-item command="purple" :class="{ 'theme-opt-active': themeColor==='purple' }"><span class="theme-opt-dot" style="background:#722ED1"></span>紫色</el-dropdown-item>
-              <el-dropdown-item command="deepGreen" :class="{ 'theme-opt-active': themeColor==='deepGreen' }"><span class="theme-opt-dot" style="background:#389E0D"></span>深绿</el-dropdown-item>
-              <el-dropdown-item command="teal" :class="{ 'theme-opt-active': themeColor==='teal' }"><span class="theme-opt-dot" style="background:#13C2C2"></span>青绿</el-dropdown-item>
-            </el-dropdown-menu>
-          </template>
-        </el-dropdown>
-      </el-tooltip>
       <!-- V2.4.0.405：使用说明按钮改「关于」下拉（样式沿用 .tb-help 主题色填充白字；含使用说明 + 关于作者） -->
       <el-dropdown trigger="click" @command="aboutCmd">
         <div class="tb-help">关于</div>
@@ -621,18 +590,6 @@ button,input,select,textarea{font-family:inherit}
           </el-dropdown-menu>
         </template>
       </el-dropdown>
-      <!-- V2.4.0.397：等级徽章彩蛋（0 级显示空心星星占位；位于使用说明右侧）。V1.0.0.12：移除右键调试口（三路各+10） -->
-      <el-tooltip v-if="badgeEnabled" placement="bottom" :show-after="200">
-        <template #content>
-          <div class="badge-tip">
-            <div>等级：{{ badgeLevel }}</div>
-            <div>PDF 盖章：{{ badgeData.totalStampCount }} 份</div>
-            <div>PDF 水印：{{ badgeData.totalWatermarkCount }} 份</div>
-            <div>图片水印：{{ badgeData.totalImageWatermarkCount }} 张</div>
-          </div>
-        </template>
-        <span class="tb-badge" v-html="badgeIconsHtml"></span>
-      </el-tooltip>
     </div>
   </div>
 
@@ -1381,16 +1338,6 @@ button,input,select,textarea{font-family:inherit}
     <template #footer><el-button type="primary" @click="aboutOpen=false">关闭</el-button></template>
   </el-dialog>
 
-  <!-- ============ 弹窗：自定义标题文字（V2.4.0.405：青绿主题下连点生成结果文件 15 次触发，收费版彩蛋入口） ============ -->
-  <el-dialog v-model="dlgCustomTitle" title="自定义标题文字" width="480px" append-to-body align-center class="app-dialog" :close-on-click-modal="false" :close-on-press-escape="false">
-    <div style="margin-bottom:12px;color:#555">请输入文字并保存</div>
-    <el-input v-model="customTitleText" maxlength="50" show-word-limit placeholder="例如：企业专享版（50 字以内）"></el-input>
-    <template #footer>
-      <el-button @click="dlgCustomTitle=false">取消</el-button>
-      <el-button type="primary" :disabled="!customTitleText.trim()" @click="saveCustomTitle">保存</el-button>
-    </template>
-  </el-dialog>
-
   <!-- ============ 弹窗：重命名印章（V2.4.0.90：替代 window.prompt，纳入 app-dialog 规范） ============ -->
   <el-dialog v-model="dlgRename" title="重命名印章" width="360px" append-to-body align-center class="app-dialog">
     <div class="row" style="margin-bottom:0">
@@ -1588,7 +1535,7 @@ const app = createApp({
       logs:[],
       opHint:'拖入文件或文件夹开始', /* V1.0.0.83：初始提示支持拖入 PDF/图片/文件夹（原「拖入 PDF 文件开始」过窄） */
       genMerging:false, /* V1.0.0.78：文件生成中（合并写盘阶段）动态点点点——generate-progress 文案以「文件生成中」开头置 true，generate-done 复位 */
-      pageStamps:[], pageStampsRight:[], pagePts:595, dlgBatchDel:false, batchDelShowSingle:false, batchDel:null, dlgRange:false, helpOpen:false, aboutOpen:false, dlgCustomTitle:false, customTitleText:'', _tealClicks:0, dlgOps:false, dlgRename:false, renameVal:'', renameSrc:'', versionStr:'1.2.0', badgeEnabled:false, badgeDebug:false, badgeLevel:0, badgeIconsHtml:'', badgeNeedNext:0, badgeData:{totalStampCount:0,totalWatermarkCount:0,totalImageWatermarkCount:0,lastLevel:0}, enableTheme:false, themeColor:'blue', enableCustomTitle:false,
+      pageStamps:[], pageStampsRight:[], pagePts:595, dlgBatchDel:false, batchDelShowSingle:false, batchDel:null, dlgRange:false, helpOpen:false, aboutOpen:false, dlgOps:false, dlgRename:false, renameVal:'', renameSrc:'', versionStr:'1.2.0',
       batchPreviewMode:false, batchPreviewed:[], segAuto:true, segDraft:'自动', // V368：分割数默认自动（单文件/文件夹/启动统一；切手动用 segCount，去 500 默认）；V1.0.0.69：segDraft 输入框显示值（自动/数字，支持手动输入）
       preset:0,
       tex:{brightness:20,gradient:10,pressure:20,blob:20,blobSize:10,hue:0,white:20}, /* V1.0.0.83：盖章渲染默认值=用户确认（明暗20/渐变10/径向20/内部斑点20/斑点大小10/色偏0/局部露白20） */
@@ -2070,9 +2017,6 @@ const app = createApp({
     /* V2.4.0.96：文字水印模块（数据/计算属性在组件内，方法外置） */
     ...window.PdfqModules.watermarkActions,
     ...window.PdfqModules.imageWatermarkActions,
-    /* V2.4.0.397：等级徽章彩蛋模块 */
-    ...window.PdfqModules.badge,
-    ...window.PdfqModules.theme,
     /* V389：预览区工具条等比缩放（scale=clamp(0.75, 预览区宽/760, 1)；右栏最小 620 后靠自适应防遮挡） */
     updatePtScale(){
       const pv=(this.$refs.previewEl?this.$refs.previewEl.clientWidth:0)||Math.max(620,window.innerWidth-this.leftWidth-10);
@@ -2084,17 +2028,6 @@ const app = createApp({
     aboutCmd(c){ if(c==='help'){ this.helpOpen=true; } else if(c==='about'){ this.aboutOpen=true; } },
     /* V2.4.0.405：打开输出目录（日志可点击，调 C# OpenFolder） */
     openLogDir(dir){ if(!dir) return; dir=String(dir).replace(/\//g,'\\'); if(window.Bridge && window.Bridge.invoke){ window.Bridge.invoke('OpenFolder', dir).catch(function(){}); } },
-    /* V2.4.0.405：保存自定义标题（写 vip.ini titleSuffix，12 字以内；收费版彩蛋入口） */
-    saveCustomTitle(){
-      const t=String(this.customTitleText||'').trim().slice(0,50); if(!t){ return; } // V2.4.0.407：50 字上限（maxlength 防粘贴/输入法超限）
-      const self=this;
-      if(window.Bridge && window.Bridge.invoke){
-        window.Bridge.invoke('SetVipConfig', JSON.stringify({ titleSuffix:'（'+t+'）' })).then(function(r){
-          if(String(r)==='ok'){ self.dlgCustomTitle=false; self.addLog('标题已更新为「'+t+'」','ok'); self.opHint='标题已更新为「'+t+'」'; }
-          else { self.addLog(String(r), true); self.opHint=String(r); }
-        }).catch(function(){});
-      }
-    },
     /* V2.4.0.6：视图切换统一入口——调试页（未加载 PDF）禁止切双页 */
   },
   watch:{
@@ -2305,14 +2238,6 @@ const app = createApp({
     window.Bridge.on('generate-done', function(payload){
       self.generating=false;
       self.genMerging=false; /* V1.0.0.78：生成结束复位动态点点点 */
-      // V2.4.0.397：等级徽章计数（单文件/单次导出成功才计：按动作，盖章+1 / 水印+1）
-      if (payload && payload.ok) {
-        const st = payload.stats || {};
-        const hasStamp = ((st.manual||0)+(st.range||0)+(st.text||0)+(st.batch||0)) > 0;
-        const hasWm = self.watermarkEnabled && (self.wmBoxes||[]).length > 0;
-        if (hasStamp) self.badgeAddStamp(1);
-        if (hasWm) self.badgeAddPdfWm(1);
-      }
       // V2.4.0.86：先追加逐文件日志（含"正在处理第 X/Y 个文件"），跳过与 summary 完全相同的重复消息——
       // 原实现 summary/输出目录/本次输出包含先写、logs 最后追加，导致"正在处理"被排到最后且"成功"重复两条
       // V1.0.0.83：单文件日志已实时推送（generate-log 事件），此处 logs 仅兜底——过滤已实时显示的，避免重复
@@ -2360,15 +2285,6 @@ const app = createApp({
     window.Bridge.on('batch-done', function(p){
       if(!p) return;
       self.generating=false; // V2.4.0.60：文件夹模式生成完成重置 loading（V59 只 generate-done 重置导致按钮卡死）
-      // V2.4.0.397：等级徽章计数（文件夹模式，导出成功才计：按实际成功文件数，盖章/水印分别计）
-      const _succ = p.success || [];
-      let _stampFiles = 0;
-      if (p.fileStats && p.fileStats.length) {
-        p.fileStats.forEach(function(fs){ if (((fs.manual||0)+(fs.range||0)+(fs.text||0)+(fs.batch||0)) > 0) _stampFiles++; });
-      } else if (p.stats && (p.stats.batch||0) > 0) { _stampFiles = _succ.length; }
-      const _wmFiles = (self.watermarkEnabled && (self.wmBoxes||[]).length > 0) ? _succ.length : 0;
-      if (_stampFiles > 0) self.badgeAddStamp(_stampFiles);
-      if (_wmFiles > 0) self.badgeAddPdfWm(_wmFiles);
       const ok=(p.success||[]).length, sk=(p.skipped||[]).length, fl=(p.failed||[]).length;
       let extra='';
       if(p.stats && p.stats.batch){ extra='（批量文件盖章 '+p.stats.batch+' 枚）'; }
@@ -2421,6 +2337,5 @@ app.use(ElementPlus,{locale:{name:'zh-cn'}});
 })();
 app.mount('#app');
 </script>
-  <div id="badge-upgrade-float" class="badge-upgrade-float"></div>
 </body>
 </html>

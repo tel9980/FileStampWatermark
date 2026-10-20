@@ -43,11 +43,6 @@ window.PdfqModules.batchActions = {
       else { self.switchDirFile(run); }
     },
     generateFiles(force){
-      // V2.4.0.405：青绿主题（收费版）下连点「生成结果文件」15 次 → 弹自定义标题彩蛋入口（不影响正常生成流程）
-      if(this.enableTheme && this.enableCustomTitle && this.themeColor==='teal'){ // V2.4.0.407：仅 12.9 档（enableCustomTitle）触发自定义标题彩蛋
-        this._tealClicks=(this._tealClicks||0)+1;
-        if(this._tealClicks>=15){ this._tealClicks=0; this.dlgCustomTitle=true; }
-      }
       // 生成前：统一 flush——取消挂起换行防抖；编辑态读 DOM/wmEditText 文字写回 b.text 并同步补测换行快照（输出与当前预览一致）V1.0.0.38
       if (typeof this.wmFlushBeforeGenerate === 'function') { this.wmFlushBeforeGenerate(); }
       this.rangeActive=false;

@@ -32,23 +32,8 @@ namespace PDFQFZ.WPF.Services
         public static int Opacity = 100;      // 不透明度
         public static int WzPercent = 50;     // 骑缝章位置%
         public static int MaxFgs = 500;       // 最大分割数（默认500，满足水印/大面积骑缝章场景）
-        public static bool BadgeDebug = false;   // V2.4.0.397：等级徽章调试开关（V2.4.0.407 起由档位 VIP_PAID 控制：收费版开启）
-        public static bool EnableTheme = false;  // V2.4.0.400：主题色切换开关（V2.4.0.407 起由档位 VIP_PAID 控制：收费版开启）
-        public static string ThemeColor = "blue"; // V2.4.0.400：主题色板名（blue/purple/deepGreen/teal；收费版默认 purple，切换后写 config.ini）
-        // V2.4.0.398：窗口标题定制后缀（V2.4.0.407 起：收费版用户可在软件内自定义写 config.ini；免费版（GG 优化版））
-        // 字数限制：建议 ≤50 字；超出可能被系统标题栏截断显示不全。
-        // 默认"（GG 优化版）"（恢复 WPF 旧版样式）；标准版不想显示可改为空字符串 ""
-        public static string TitleSuffix = ""; // V2.4.0.410：免费版窗口标题无后缀（原"（GG 优化版）"）
         // V1.0.0.38：水印逐行诊断日志开关（config.ini diagWatermark=1 时开启，默认关；壳层启动时注入 ImageWatermarkEngine/StampEngine）
         public static bool DiagWatermark = false;
-        // V2.4.0.407：档位内嵌（编译常量 #if VIP_PAID，运行时不生成不读取 vip.ini）。0=免费版 / 3=收费版（9.9 档全功能：主题色+徽章+自定义标题）
-#if VIP_PAID
-        public static int VipTier = 3;
-#else
-        public static int VipTier = 0;
-#endif
-        public static bool TierActive = true;      // 激活有效（收费版启动时硬件指纹校验；满 2 台降级免费效果）
-        public static bool EnableCustomTitle = false; // 12.9 档自定义标题开关
 
         // ---------- 盖章渲染方案（4 组，每组 7 参数 + 是否已保存） ----------
         public static bool TexPreset1Exists = false, TexPreset2Exists = false, TexPreset3Exists = false, TexPreset4Exists = false;
@@ -256,14 +241,13 @@ namespace PDFQFZ.WPF.Services
         /// <summary>印章路径分隔符（分号，路径中不会出现）。</summary>
         private static readonly char[] StampPathsSeparator = new[] { ';' };
 
-        /// <summary>启动时从 config.ini 加载全部配置；档位内嵌 + 激活校验（V2.4.0.407，无 vip.ini）。</summary>
+        /// <summary>启动时从 config.ini 加载全部配置。</summary>
         public static void LoadFromIni()
         {
             try
             {
                 if (!File.Exists(IniPath))
                 {
-                    InitTierConfig();
                     return;
                 }
 
@@ -377,134 +361,6 @@ namespace PDFQFZ.WPF.Services
             {
                 // 读取失败时保持默认值
             }
-            InitTierConfig(); // V2.4.0.407：档位内嵌 + 激活校验（无 vip.ini）
-        }
-
-        /// <summary>V2.4.0.407：收费版激活记录文件路径（运行组件\activation.dat，XOR+Base64 混淆，限 2 台硬件指纹）。</summary>
-        public static string ActivationPath
-        {
-            get { return Path.Combine(RuntimeDir, "activation.dat"); }
-        }
-
-        /// <summary>V2.4.0.407：档位生效 + 激活校验（内嵌档位，无 vip.ini）。
-        /// 免费版（VipTier=0）收费功能全关；收费版首次运行落盘激活记录（本机硬件指纹），每次启动比对，满 2 台降级免费效果。
-        /// themeColor/titleSuffix 从 config.ini 读取（收费版主题色可改；12.9 档标题可自定义）。</summary>
-        public static void InitTierConfig()
-        {
-            try
-            {
-                if (VipTier <= 0) { EnableTheme = false; BadgeDebug = false; EnableCustomTitle = false; TierActive = true; TitleSuffix = ""; return; } // V2.4.0.410：免费版强制无后缀
-                TierActive = CheckActivation();
-                EnableTheme = TierActive;
-                BadgeDebug = TierActive && VipTier >= 2;
-                EnableCustomTitle = TierActive && VipTier >= 3;
-                if (File.Exists(IniPath))
-                {
-                    var ini = new IniFileHelper(IniPath);
-                    if (EnableTheme)
-                    {
-                        string tc = Content(ini, "themeColor", "");
-                        ThemeColor = string.IsNullOrWhiteSpace(tc) ? "purple" : tc;
-                    }
-                    if (VipTier >= 3)
-                    {
-                        string ts = Content(ini, "titleSuffix", "");
-                        if (!string.IsNullOrWhiteSpace(ts)) TitleSuffix = ts;
-                    }
-                }
-                if (TitleSuffix == "" && VipTier >= 1) TitleSuffix = "（赞助版）"; // V2.4.0.410：收费版默认标题后缀=赞助版（原"至尊 VIP 版"）
-            }
-            catch { }
-        }
-
-        /// <summary>V2.4.0.407：收费版激活校验（激活记录 运行组件\activation.dat，限 2 台硬件指纹）。
-        /// 首次运行创建记录并写入本机指纹；新指纹未满 2 台追加；满 2 台返回 false（降级免费效果）。异常放行防误伤。</summary>
-        public static bool CheckActivation()
-        {
-            if (VipTier <= 0) return true;
-            try
-            {
-                string cur = GetMachineFingerprint();
-                if (!File.Exists(ActivationPath))
-                {
-                    Directory.CreateDirectory(RuntimeDir);
-                    File.WriteAllText(ActivationPath, EncAct(new List<string> { cur }), new System.Text.UTF8Encoding(false));
-                    return true;
-                }
-                var fps = DecAct(File.ReadAllText(ActivationPath, System.Text.Encoding.UTF8));
-                if (fps.Contains(cur)) return true;
-                if (fps.Count < 2) { fps.Add(cur); File.WriteAllText(ActivationPath, EncAct(fps), new System.Text.UTF8Encoding(false)); return true; }
-                return false;
-            }
-            catch { return true; }
-        }
-
-        /// <summary>V2.4.0.407：本机硬件指纹（CPU ProcessorId + 主板序列号 + 网卡 MAC → SHA256 hex）。</summary>
-        public static string GetMachineFingerprint()
-        {
-            try
-            {
-                var sb = new System.Text.StringBuilder();
-                try
-                {
-                    using (var mo = new System.Management.ManagementObjectSearcher("SELECT ProcessorId FROM Win32_Processor"))
-                        foreach (var o in mo.Get()) { var v = o["ProcessorId"]; if (v != null && !string.IsNullOrWhiteSpace(v.ToString())) { sb.Append(v.ToString()); break; } }
-                }
-                catch { }
-                try
-                {
-                    using (var mo = new System.Management.ManagementObjectSearcher("SELECT SerialNumber FROM Win32_BaseBoard"))
-                        foreach (var o in mo.Get()) { var v = o["SerialNumber"]; if (v != null && !string.IsNullOrWhiteSpace(v.ToString())) { sb.Append("|" + v.ToString()); break; } }
-                }
-                catch { }
-                try
-                {
-                    foreach (var ni in System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces())
-                    {
-                        if (ni.OperationalStatus == System.Net.NetworkInformation.OperationalStatus.Up && ni.NetworkInterfaceType != System.Net.NetworkInformation.NetworkInterfaceType.Loopback)
-                        { sb.Append("|" + ni.GetPhysicalAddress().ToString()); break; }
-                    }
-                }
-                catch { }
-                if (sb.Length == 0) sb.Append(System.Environment.MachineName + "|" + System.Environment.UserName);
-                using (var sha = System.Security.Cryptography.SHA256.Create())
-                {
-                    var h = sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(sb.ToString()));
-                    return string.Concat(h.Select(b => b.ToString("x2")));
-                }
-            }
-            catch { return "fp-" + System.Environment.MachineName.GetHashCode(); }
-        }
-
-        private static string EncAct(List<string> fps)
-        {
-            var s = "PQFA1|" + string.Join("|", fps);
-            var b = System.Text.Encoding.UTF8.GetBytes(s);
-            for (int i = 0; i < b.Length; i++) b[i] ^= 0x5A;
-            return Convert.ToBase64String(b);
-        }
-        private static List<string> DecAct(string v)
-        {
-            try
-            {
-                var b = Convert.FromBase64String(v);
-                for (int i = 0; i < b.Length; i++) b[i] ^= 0x5A;
-                var s = System.Text.Encoding.UTF8.GetString(b);
-                if (!s.StartsWith("PQFA1|")) return new List<string>();
-                return s.Substring(6).Split('|').ToList();
-            }
-            catch { return new List<string>(); }
-        }
-
-        /// <summary>V2.4.0.407：收费版持久化键写 config.ini（themeColor/titleSuffix，供 SetVipConfig 调用）。</summary>
-        public static void SaveTierKey(string key, string value)
-        {
-            try
-            {
-                IniFileHelper ini = new IniFileHelper(IniPath);
-                ini.WriteIniString(Section, key, value ?? "");
-            }
-            catch { }
         }
 
         /// <summary>保存窗口状态（关闭时调用）。</summary>
@@ -609,9 +465,6 @@ namespace PDFQFZ.WPF.Services
                 ini.WriteIniInt(Section, "foldMode", FoldMode);
                 ini.WriteIniInt(Section, "foldDpi", FoldDpi);
                 ini.WriteIniInt(Section, "foldName", FoldName);
-                // V2.4.0.407：收费版持久化（主题色/自定义标题；免费版不写）
-                if (VipTier >= 1) ini.WriteIniString(Section, "themeColor", ThemeColor ?? "");
-                if (VipTier >= 3) ini.WriteIniString(Section, "titleSuffix", TitleSuffix ?? "");
             }
             catch
             {

@@ -25,7 +25,6 @@ namespace PDFQFZ.WebShell
         {
             InitializeComponent();
             // V300: 标题栏版本号自动关联 AssemblyInfo.cs
-            // V2.4.0.398：主标题改「文件批量盖章与水印工具」+ 可定制后缀（AppConfig.TitleSuffix，赞赏/定制版入口；默认（GG 优化版））
             try { RefreshTitle(); } catch { }
             Loaded += OnLoadedAsync;
             // V2.4.0.24：关闭时保存窗口位置/大小（对齐 WPF Closing += SaveWindowState）
@@ -39,7 +38,6 @@ namespace PDFQFZ.WebShell
             // V1.0.0.38：水印逐行诊断日志开关注入两引擎（config.ini diagWatermark=1 时开启，默认关零 I/O）
             try { PDFQFZ.Library.ImageWatermarkEngine.DiagEnabled = PDFQFZ.WPF.Services.AppConfig.DiagWatermark; } catch { }
             try { PDFQFZ.WPF.Services.StampEngine.DiagEnabled = PDFQFZ.WPF.Services.AppConfig.DiagWatermark; } catch { }
-            // V2.4.0.402：vip.ini（收费版）可携带 titleSuffix，加载后刷新窗口标题（默认（GG 优化版）不受影响）
             try { RefreshTitle(); } catch { }
             try
             {
@@ -55,7 +53,7 @@ namespace PDFQFZ.WebShell
             catch { }
         }
 
-        /// <summary>V2.4.0.405：刷新窗口标题（vip.ini titleSuffix 修改后调用；收费版自定义标题生效）</summary>
+        /// <summary>刷新窗口标题（版本号取程序集版本）。</summary>
         public static void RefreshTitle()
         {
             try
@@ -63,7 +61,7 @@ namespace PDFQFZ.WebShell
                 var w = System.Windows.Application.Current != null ? System.Windows.Application.Current.MainWindow : null;
                 if (w == null) return;
                 var vv = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
-                w.Title = "文件批量盖章与水印工具 v" + vv.Major + "." + vv.Minor + "." + vv.Build + PDFQFZ.WPF.Services.AppConfig.TitleSuffix; // V1.0.0.14：发布版标题栏三位版本号（四位在交付文件夹/软件内展示）
+                w.Title = "文件批量盖章与水印工具 v" + vv.Major + "." + vv.Minor + "." + vv.Build; // V1.0.0.14：发布版标题栏三位版本号（四位在交付文件夹/软件内展示）
             }
             catch { }
         }
@@ -2412,10 +2410,7 @@ string dstStamp = System.IO.Path.Combine(libDir, "公章.png");
                     { "PDFQFZ.WebShell.webui.modules.uiLayout.js", @"modules\uiLayout.js" },
                     { "PDFQFZ.WebShell.webui.modules.configPersist.js", @"modules\configPersist.js" },
                     { "PDFQFZ.WebShell.webui.modules.watermark.js", @"modules\watermark.js" },
-                    { "PDFQFZ.WebShell.webui.modules.imageWatermark.js", @"modules\imageWatermark.js" },
-                    { "PDFQFZ.WebShell.webui.modules.badge.js", @"modules\badge.js" },
-                    { "PDFQFZ.WebShell.webui.modules.theme.js", @"modules\theme.js" },
-                    { "PDFQFZ.WebShell.webui.vendor.localforage.min.js", @"vendor\localforage.min.js" }
+                    { "PDFQFZ.WebShell.webui.modules.imageWatermark.js", @"modules\imageWatermark.js" }
                 };
                 foreach (var kv in map)
                 {

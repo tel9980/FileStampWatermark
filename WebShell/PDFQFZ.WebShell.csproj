@@ -35,17 +35,9 @@
     <WarningLevel>4</WarningLevel>
     <Prefer32Bit>false</Prefer32Bit>
   </PropertyGroup>
-  <!-- 赞助版（发布用）：TRACE;VIP_PAID，开启主题色+徽章+自定义标题 -->
-  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'ReleaseVIP|AnyCPU' ">
-    <PlatformTarget>AnyCPU</PlatformTarget>
-    <DebugType>pdbonly</DebugType>
-    <Optimize>true</Optimize>
-    <OutputPath>bin\ReleaseVIP\</OutputPath>
-    <DefineConstants>TRACE;VIP_PAID</DefineConstants>
-    <ErrorReport>prompt</ErrorReport>
-    <WarningLevel>4</WarningLevel>
-    <Prefer32Bit>false</Prefer32Bit>
-  </PropertyGroup>
+  <!-- 2026-10-20：赞助版（ReleaseVIP / VIP_PAID）档位已整体下线，
+       只保留免费版 Release（TRACE）。原 VIP 档提供主题色切换 / 等级徽章 / 自定义标题，
+       对应源码与前端模块（theme.js / badge.js）已一并删除，档位无恢复计划。 -->
   <ItemGroup>
     <Reference Include="PresentationCore" />
     <Reference Include="PresentationFramework" />
@@ -56,7 +48,6 @@
     <Reference Include="System.Drawing" />
     <Reference Include="System.Windows.Forms" />
     <Reference Include="System.Web.Extensions" />
-    <Reference Include="System.Management" />
   </ItemGroup>
   <ItemGroup>
     <ApplicationDefinition Include="App.xaml">
@@ -267,15 +258,6 @@
     </EmbeddedResource>
     <EmbeddedResource Include="..\WebUI\prototype\modules\imageWatermark.js">
       <LogicalName>PDFQFZ.WebShell.webui.modules.imageWatermark.js</LogicalName>
-    </EmbeddedResource>
-    <EmbeddedResource Include="..\WebUI\prototype\modules\badge.js">
-      <LogicalName>PDFQFZ.WebShell.webui.modules.badge.js</LogicalName>
-    </EmbeddedResource>
-    <EmbeddedResource Include="..\WebUI\prototype\modules\theme.js">
-      <LogicalName>PDFQFZ.WebShell.webui.modules.theme.js</LogicalName>
-    </EmbeddedResource>
-    <EmbeddedResource Include="..\WebUI\prototype\vendor\localforage.min.js">
-      <LogicalName>PDFQFZ.WebShell.webui.vendor.localforage.min.js</LogicalName>
     </EmbeddedResource>
     <EmbeddedResource Include="..\WebUI\prototype\lib\vue.global.prod.js">
       <LogicalName>PDFQFZ.WebShell.webui.lib.vue.global.prod.js</LogicalName>

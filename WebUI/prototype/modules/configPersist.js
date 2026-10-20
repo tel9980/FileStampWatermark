@@ -21,12 +21,7 @@ window.PdfqModules.configPersist = {
       if(cfg.contextExcludeSpaces!==undefined) this.ignoreSpace=!!cfg.contextExcludeSpaces;
       if(cfg.outputDir!==undefined) this.saveDir=cfg.outputDir;
       if(cfg.outputDirLocked!==undefined) this.dirLocked=cfg.outputDirLocked===1;
-      if(cfg.badgeDebug!==undefined) this.badgeDebug=!!cfg.badgeDebug; // V2.4.0.397：等级徽章调试开关（config.ini badgeDebug=1）
-      if(cfg.enableTheme!==undefined) this.enableTheme=!!cfg.enableTheme; // V2.4.0.400：主题色切换开关（config.ini enableTheme=1）
-      if(cfg.themeColor!==undefined) this.themeColor=cfg.themeColor||'blue'; // V2.4.0.400：主题色板（blue/purple/green）
-      if(cfg.enableCustomTitle!==undefined) this.enableCustomTitle=!!cfg.enableCustomTitle; // V2.4.0.407：12.9 档自定义标题开关
       if(cfg.version!==undefined) this.versionStr=cfg.version; // V1.0.0.14：完整版本号（使用说明/关于弹窗展示，反馈定位用）
-      if(cfg.tierActive!==undefined && !cfg.tierActive && typeof this.addLog==='function') this.addLog('授权已绑定 2 台设备，收费功能已停用（当前为免费版效果）','warn'); // V2.4.0.407：满 2 台降级提示
       if(cfg.leftPanelWidth!==undefined && cfg.leftPanelWidth>0){ const mw=Math.min(760,window.innerWidth-10-600); const lo=Math.min(this.leftMinW,mw); this.leftWidth=Math.max(lo,Math.min(cfg.leftPanelWidth,mw)); } // v2.4.0.36：clamp[min(leftMinW,上限),min(760,内容宽-10-600)]
       if(cfg.foldDisp!==undefined) this.stampSect.disp=!!cfg.foldDisp;
       if(cfg.foldRidge!==undefined) this.stampSect.ridge=!!cfg.foldRidge;
@@ -40,8 +35,6 @@ window.PdfqModules.configPersist = {
       if(cfg.maxfgs!==undefined && cfg.maxfgs>0) this.segCount=cfg.maxfgs;
       if(cfg.wzType!==undefined) this.sealPos=['下','上','左','右'][cfg.wzType]||'右';
       if(cfg.wz!==undefined) this.posVal=cfg.wz+'%';
-      if (typeof this.badgeInit === 'function') this.badgeInit(); // V2.4.0.397：徽章初始化（幂等；badgeDebug 已就位）
-      if (typeof this.themeInit === 'function') this.themeInit(); // V2.4.0.400：主题色初始化（幂等；enableTheme/themeColor 已就位）
       this._shellLoading=false;
     },
     applyStampParams(p){

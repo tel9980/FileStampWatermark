@@ -500,7 +500,6 @@ window.PdfqModules.imageWatermarkActions = {
                     self.imgBusy = false;
                     let r = {}; try { r = JSON.parse(json); } catch (e) {}
                     if (r.ok) {
-                        if (r.done > 0 && typeof self.badgeAddImgWm === 'function') self.badgeAddImgWm(r.done); // V2.4.0.397：等级徽章计数（图片水印成功 N 张 +N）
                         const outs = r.outputs || [];
                         let msg = '批量输出完成：共 ' + r.total + ' 张，成功 ' + r.done + ' 张' +
                             (r.skipped > 0 ? '，无水印框跳过 ' + r.skipped + ' 张' : '') +
