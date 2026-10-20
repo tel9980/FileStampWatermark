@@ -44,7 +44,7 @@ namespace PDFQFZ.WebShell.Services
                 try { bytes = Convert.FromBase64String(base64); }
                 catch { return "{\"ok\":false,\"error\":\"base64 无效\"}";
                 }
-                string safeName = Path.GetFileName((fileName ?? "img.png").Replace('\\', '/'));
+                string safeName = SanitizeDroppedFileName(fileName, "img.png");
                 if (!ImageWatermarkEngine.IsSupported(safeName)) safeName += ".png";
                 string dir = Path.Combine(Path.GetTempPath(), "pdfqfz_imgdrop_" + _procTag);
                 Directory.CreateDirectory(dir);

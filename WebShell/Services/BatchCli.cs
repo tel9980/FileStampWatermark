@@ -160,27 +160,30 @@ namespace PDFQFZ.WebShell.Services
             if (string.IsNullOrWhiteSpace(logPath))
                 logPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "运行组件", "batch.log");
             var log = new BatchLog(logPath);
+            // 先删旧日志：本次若在参数校验阶段就失败，日志文件里不能留着上一次成功运行的
+            // 「===== 给用户的反馈 =====」段——智能体会把上次的結果当本次結果转述给用户。
+            try { if (File.Exists(logPath)) File.Delete(logPath); } catch { }
 
             log.Line("===== PDFQFZ 批处理任务 =====");
             log.Line("版本: " + GetVersionText());
             log.Line("开始时间: " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
 
-            if (!File.Exists(jsonPath)) { log.Err("任务文件不存在：" + jsonPath); return 1; }
+            if (!File.Exists(jsonPath)) return FailFast(log, "任务文件不存在：" + jsonPath);
             Dictionary<string, object> task;
             try
             {
                 task = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(
                     File.ReadAllText(jsonPath, Encoding.UTF8));
             }
-            catch (Exception ex) { log.Err("任务 JSON 解析失败：" + ex.Message); return 1; }
-            if (task == null) { log.Err("任务 JSON 为空或格式错误"); return 1; }
+            catch (Exception ex) { return FailFast(log, "任务 JSON 解析失败：" + ex.Message); }
+            if (task == null) return FailFast(log, "任务 JSON 为空或格式错误");
 
             string type = S(task, "task");
-            if (string.IsNullOrWhiteSpace(type)) { log.Err("缺少 task 字段（pdf-stamp/pdf-watermark/pdf-text-stamp/img-watermark）"); return 1; }
+            if (string.IsNullOrWhiteSpace(type)) return FailFast(log, "缺少 task 字段（pdf-stamp/pdf-watermark/pdf-text-stamp/img-watermark）");
             var inputs = ParseInputs(task);
-            if (inputs.Count == 0) { log.Err("缺少 input 字段（源文件夹路径，可为单个字符串或字符串数组）"); return 1; }
+            if (inputs.Count == 0) return FailFast(log, "缺少 input 字段（源文件夹路径，可为单个字符串或字符串数组）");
             foreach (var ip in inputs)
-                if (!Directory.Exists(ip)) { log.Err("输入目录不存在：" + ip); return 1; }
+                if (!Directory.Exists(ip)) return FailFast(log, "输入目录不存在：" + ip);
 
             log.Line("任务类型: " + TaskTypeName(type));
             log.Line(inputs.Count == 1 ? "输入目录: " + inputs[0] : "输入目录（" + inputs.Count + " 个）: " + string.Join("；", inputs));
@@ -245,6 +248,25 @@ namespace PDFQFZ.WebShell.Services
                     log.Line("文件夹" + (i + 1) + "（" + inputs[i] + "）：" + _folderSummaries[i]);
             log.End(code);
             return code;
+        }
+
+        /// <summary>早期失败（参数/路径错误）：必须先落盘再返回。
+        /// <para>缺陷修复：此前 7 处参数校验失败都是直接 return 1，而日志只在正常流程末尾
+        /// BatchLog.End(code) 才写盘——智能体按手册「读日志 [错误] 行」什么也读不到，
+        /// 只能猜；更糟的是 --log 指向的文件里还留着上一次成功运行的反馈段，
+        /// 智能体会把上次的結果当本次結果转述给用户。</para></summary>
+        private static int FailFast(BatchLog log, string msg)
+        {
+            try { log.Err(msg); } catch { }
+            try
+            {
+                log.Line("");
+                log.Line("===== 给用户的反馈 =====");
+                log.Line("任务未执行：" + msg);
+                log.End(1);
+            }
+            catch { }
+            return 1;
         }
 
         static string TaskTypeName(string t)
@@ -429,7 +451,16 @@ namespace PDFQFZ.WebShell.Services
             log.Line("[步骤] 按文字「" + keyword + "」放置印章…");
             var a = Parse(bridge.AutoStampDir(keyword, keywords, ctxRange, requireAll, ignoreSpace, offEnabled, (float)offX, (float)offY));
             if (!Ok(a)) { log.Err("按文字盖章失败：" + Err(a)); return 1; }
-            log.Line("[步骤] 按文字盖章完成：共新增 " + (I(a, "total", 0)) + " 个章");
+            // 缺陷修复：一个章都没放上去也算「完成」——关键字写错/扫描件无文字层时，
+            // 会继续生成一份「没有章的 PDF 副本」，退出码 0、日志显示完成，
+            // 智能体据此向用户汇报「已盖章」（财务场景：看起来盖了其实没盖）。
+            int placed = I(a, "total", 0);
+            if (placed <= 0)
+            {
+                log.Err("按文字盖章未找到任何匹配位置（关键字不存在 / 该 PDF 无文字层），任务终止（未生成任何输出文件）");
+                return 1;
+            }
+            log.Line("[步骤] 按文字盖章完成：共新增 " + placed + " 个章");
 
             var args = BuildGenArgs(task, input);
             _done.Reset();
@@ -492,8 +523,13 @@ namespace PDFQFZ.WebShell.Services
             if (!Ok(g)) { log.Err("生成失败：" + Err(g)); return 1; }
             var success = g.ContainsKey("success") ? g["success"] as System.Collections.ArrayList : null;
             var failed = g.ContainsKey("failed") ? g["failed"] as System.Collections.ArrayList : null;
+            // 缺陷修复：skipped（加密/无法打开的文件）此前完全不参与统计——
+            // 全部文件都失败时退出码仍是 0、日志摘要写「已完成 0 个文件处理」，
+            // 智能体按退出码判定「全部成功」并向用户汇报（实际一个文件都没产出）。
+            var skipped = g.ContainsKey("skipped") ? g["skipped"] as System.Collections.ArrayList : null;
             int okN = success != null ? success.Count : 0;
             int failN = failed != null ? failed.Count : 0;
+            int skipN = skipped != null ? skipped.Count : 0;
             // V384：反馈列出实际输出文件名（S5/S7）
             var outNames = new List<string>();
             if (success != null)
@@ -509,11 +545,19 @@ namespace PDFQFZ.WebShell.Services
                     var d = f as Dictionary<string, object>;
                     log.Line("[失败] " + (d != null ? S(d, "name") : "") + "：" + (d != null ? S(d, "reason") : ""));
                 }
+            if (skipped != null)
+                foreach (var f in skipped)
+                {
+                    var d = f as Dictionary<string, object>;
+                    log.Line("[跳过] " + (d != null ? S(d, "name") : "") + "：" + (d != null ? S(d, "reason") : ""));
+                }
             log.Summary = "已完成 " + okN + " 个文件处理" + (failN > 0 ? "，失败 " + failN + " 个（原因见日志）" : "")
+                + (skipN > 0 ? "，跳过 " + skipN + " 个（加密或无法打开）" : "")
                 + "；输出文件：" + (outNames.Count > 0 ? string.Join("、", outNames) : outDir) + "（位于 " + outDir + "）";
-            log.Line("[结果] 成功 " + okN + " 个，失败 " + failN + " 个");
+            log.Line("[结果] 成功 " + okN + " 个，失败 " + failN + " 个" + (skipN > 0 ? "，跳过 " + skipN + " 个" : ""));
             log.Line("输出目录：" + outDir);
-            return failN > 0 ? 2 : 0;
+            // 跳过也算未完成（部分失败）——否则智能体会把「一个文件都没处理」当成全部成功
+            return (failN > 0 || skipN > 0) ? 2 : 0;
         }
 
         // ---------- 参数构建 ----------
@@ -522,16 +566,50 @@ namespace PDFQFZ.WebShell.Services
             try
             {
                 string img = S(stamp, "image");
-                var paths = new List<string>(AppConfig.LoadStampPaths());
-                if (!paths.Any(p => string.Equals(Path.GetFullPath(p), Path.GetFullPath(img), StringComparison.OrdinalIgnoreCase)))
-                    AppConfig.AppendStampPaths(new[] { img });
-                // V381：显示名优先按路径匹配现有印章库条目——内置默认章显示名"测试公章"≠文件名"公章"，
-                // 按文件名 SelectStamp 会导致 CurrentStampPath（按显示名找路径）落空 → "请先选择印章图片"。
-                // 新印章（不在库）AppendStampPaths 会以文件名登记显示名，路径匹配后仍取文件名，行为不变。
+                if (string.IsNullOrWhiteSpace(img) || !File.Exists(img)) return null;
+                // ── 缺陷修复 A（用错公章，财务场景事故级）────────────────────────────
+                // 此前：先把印章图 AppendStampPaths 进用户印章库（落盘），
+                // 库里若已有「同名不同图」的条目，AppendStampEntry 会因显示名重复整条跳过（新图根本没进库），
+                // 随后按「文件名」SelectStamp → CurrentStampPath 按显示名反查 → 选到**旧章**：
+                // 任务指定的图被静默替换，退出码 0、日志显示「成功」，没有任何警告。
+                // 现在：显示名冲突时用唯一名登记；选章后回验实际路径，不一致直接失败。
+                // ── 缺陷修复 B（手册铁律：config.ini 只读不可改）────────────────────────
+                // 此前 AppendStampPaths + SaveStampParams + SaveUiConfig 会把任务印章写进用户印章库、
+                // 覆盖用户为该章配好的参数、并改写全局 size/rotation/opacity。
+                // 现在：任务印章与参数只进内存（RuntimeStampEntries / RuntimeStampParamsOverride），
+                // 用户 config.ini 一个字节都不动。
+                AppConfig.RuntimeStampParamsOverride = null; // 先读该章已保存配置（不含本次覆盖）
                 var entry = AppConfig.LoadStampEntries()
                     .FirstOrDefault(x => string.Equals(Path.GetFullPath(x.Path), Path.GetFullPath(img), StringComparison.OrdinalIgnoreCase));
-                string name = entry != null ? entry.DisplayName : Path.GetFileNameWithoutExtension(img);
+                string name;
+                if (entry != null)
+                {
+                    name = entry.DisplayName;
+                }
+                else
+                {
+                    string baseName = AppConfig.SanitizeStampDisplayName(Path.GetFileNameWithoutExtension(img));
+                    if (baseName.Length == 0) baseName = "印章";
+                    name = baseName;
+                    int seq = 2;
+                    while (AppConfig.StampDisplayNameExists(name)) { name = baseName + "_" + seq; seq++; }
+                    lock (AppConfig.RuntimeStampEntries)
+                    {
+                        AppConfig.RuntimeStampEntries.Add(new AppConfig.StampEntry(name, img));
+                    }
+                }
                 bridge.SelectStamp(name);
+                // 回验：真正被选中的必须是任务指定的那张图
+                string picked = bridge.CurrentStampPathForVerify();
+                if (string.IsNullOrEmpty(picked)
+                    || !string.Equals(Path.GetFullPath(picked), Path.GetFullPath(img), StringComparison.OrdinalIgnoreCase))
+                {
+                    lock (AppConfig.RuntimeStampEntries)
+                    {
+                        AppConfig.RuntimeStampEntries.RemoveAll(e => e != null && string.Equals(e.DisplayName, name, StringComparison.OrdinalIgnoreCase));
+                    }
+                    return null;
+                }
                 // 印章尺寸/旋转/不透明度/随机位移/盖章渲染
                 // V382（P4）：任务 JSON 显式给出字段才覆盖该章参数；未给出的保留 config.ini 该章配置，
                 // 避免模板默认值覆盖用户界面已配置的参数。
@@ -558,12 +636,12 @@ namespace PDFQFZ.WebShell.Services
                 if (stamp.ContainsKey("textureRadial")) sp.TextureRadial = I(stamp, "textureRadial", 0);
                 if (stamp.ContainsKey("textureCast")) sp.TextureCast = I(stamp, "textureCast", 0);
                 if (stamp.ContainsKey("texturePresetIndex")) sp.TexturePresetIndex = I(stamp, "texturePresetIndex", 0);
-                AppConfig.SaveStampParams(name, sp);
+                // 任务参数只走内存覆盖（不落盘）：用户的 config.ini 保持原样
+                AppConfig.RuntimeStampParamsOverride = sp;
                 // 同步静态字段（供桥接/其他调用方读取）
                 AppConfig.Size = sp.Size;
                 AppConfig.Rotation = sp.Rotation;
                 AppConfig.Opacity = sp.Opacity;
-                AppConfig.SaveUiConfig();
                 return name;
             }
             catch (Exception) { return null; }
@@ -593,8 +671,14 @@ namespace PDFQFZ.WebShell.Services
                 : I(outCfg, "pos", 0);
             // V1.3.0：编号类型键名兼容——文档与模板写 "seq"（整数 0/1/2），代码此前读 "seqType"，
             // 键名不匹配导致 seqType 恒为 0，智能体无论怎么配都只能出数字编号且无任何报错。
+            // 缺陷修复：模板与前端用的都是字符串（"num"/"upper"/"lower"），
+            // Convert.ToInt32("upper") 抛异常被静默吞掉 → 编号类型恒为数字。
+            // 现在字符串与整数都支持（与 pos 的兼容写法同款）。
             args.SeqType = outCfg != null && outCfg.ContainsKey("seq")
-                ? I(outCfg, "seq", 0)
+                ? (outCfg["seq"] is string seqStr
+                    ? (string.Equals(seqStr, "upper", StringComparison.OrdinalIgnoreCase) ? 1
+                       : string.Equals(seqStr, "lower", StringComparison.OrdinalIgnoreCase) ? 2 : 0)
+                    : I(outCfg, "seq", 0))
                 : I(outCfg, "seqType", 0);
             args.Pad = I(outCfg, "pad", 1);
             args.Ts = B(outCfg, "ts");

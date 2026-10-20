@@ -62,8 +62,16 @@ namespace PDFQFZ.Library
             int done = 0, skipped = 0;
 
             // 并行度：CPU 核心数，避免过度并发争抢磁盘/内存
-            int maxParallel = Math.Max(1, Environment.ProcessorCount);
+            // 上限 4：每路任务会同时持有一张解码原图 + 一张 32bpp 目标位图
+            // （4K 图约 96MB/路），按核数并发在大批量时容易把内存打满（GDI+ 抛 OutOfMemory）。
+            int maxParallel = Math.Max(1, Math.Min(Environment.ProcessorCount, 4));
             var options = new ParallelOptions { MaxDegreeOfParallelism = maxParallel };
+
+            // 回调串行化：log/progress 会在 N 个工作线程上并发触发。
+            // 缺陷修复——引擎作为公共 API 未做线程约定，调用方传 UI 回调（控件更新/List.Add）必然跨线程异常或集合损坏。
+            object callbackLock = new object();
+            Action<string> safeLog = m => { if (log != null) lock (callbackLock) log(m); };
+            Action<int, int, string> safeProgress = (d, t, n) => { if (progress != null) lock (callbackLock) progress(d, t, n); };
 
             Parallel.ForEach(files, options, (file, state, index) =>
             {
@@ -75,20 +83,20 @@ namespace PDFQFZ.Library
                     if (boxes == null || boxes.Count == 0)
                     {
                         Interlocked.Increment(ref skipped);
-                        if (log != null) log("跳过（无水印框）：" + name);
-                        if (progress != null) progress(curDone, files.Count, name);
+                        safeLog("跳过（无水印框）：" + name);
+                        safeProgress(curDone, files.Count, name);
                         return;
                     }
                     string outPath = ApplyOne(file, boxes, outputFolder, naming);
                     outputs.Add(outPath);
-                    if (log != null) log("完成：" + name + " → " + Path.GetFileName(outPath));
+                    safeLog("完成：" + name + " → " + Path.GetFileName(outPath));
                 }
                 catch (Exception ex)
                 {
                     failures.Add(name + "：" + ex.Message);
-                    if (log != null) log("失败：" + name + "（" + ex.Message + "）");
+                    safeLog("失败：" + name + "（" + ex.Message + "）");
                 }
-                if (progress != null) progress(curDone, files.Count, name);
+                safeProgress(curDone, files.Count, name);
             });
 
             result.Done = done - skipped;
@@ -108,7 +116,6 @@ namespace PDFQFZ.Library
             if (boxes == null || boxes.Count == 0) throw new InvalidOperationException("水印框为空");
 
             var namingOpts = naming ?? new OutputNamingOptions { Mark = "已加水印V" };
-            string outPath = OutputFileNamingPolicy.GetNextOutputPath(outputFolder, srcPath, namingOpts);
 
             using (Image src = Image.FromFile(srcPath))
             {
@@ -122,10 +129,37 @@ namespace PDFQFZ.Library
                         g.DrawImage(src, 0, 0, src.Width, src.Height);
                         foreach (var box in boxes) DrawBox(g, box, src.Width, src.Height);
                     }
-                    SaveWithFormat(outBmp, srcPath, outPath);
+                    byte[] bytes = EncodeImage(outBmp, srcPath);
+                    // 独占创建（FileMode.CreateNew）：
+                    // 缺陷修复——并发批量时，不同子目录里的同名图会算出同一个输出名，
+                    // 此前 bmp.Save 直接覆盖 → 后者静默覆盖前者，成果永久丢失，而日志两边都显示「完成」。
+                    // 现在撞名就重算下一个版本号重试（此时目录里已有该名，命名策略会给出下一个版本）。
+                    string outPath = null;
+                    for (int attempt = 0; attempt < 20; attempt++)
+                    {
+                        string candidate = OutputFileNamingPolicy.GetNextOutputPath(outputFolder, srcPath, namingOpts);
+                        try
+                        {
+                            using (var fs = new FileStream(candidate, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                            {
+                                fs.Write(bytes, 0, bytes.Length);
+                            }
+                            outPath = candidate;
+                            break;
+                        }
+                        catch (IOException)
+                        {
+                            // 文件名被占用（并发同名）→ 重新计算下一个版本名
+                        }
+                        catch (UnauthorizedAccessException)
+                        {
+                            throw;  // 权限问题重试无意义，直接抛出
+                        }
+                    }
+                    if (outPath == null) throw new IOException("输出文件名反复冲突，无法生成：" + Path.GetFileName(srcPath));
+                    return outPath;
                 }
             }
-            return outPath;
         }
 
         private static readonly object WmFontLock = new object();
@@ -169,7 +203,11 @@ namespace PDFQFZ.Library
             }
         }
 
-        /// <summary>V300: 公共换行算法（用 iTextSharp BaseFont.GetWidth，和 PDF 完全一样）。</summary>
+        /// <summary>公共换行算法（GDI+ MeasureString 逐字测量）。
+        /// <para>注释更正：本方法此前声称「用 iTextSharp BaseFont.GetWidth，和 PDF 完全一样」，
+        /// 实际用的是 GDI+ MeasureString（非汉字再乘 0.9 近似）——与输出端 DrawBox 的 iText 测量口径存在细微差异。
+        /// 输出端有换行快照（wrapLines）时以快照为准，故实测影响很小；此处仅更正注释，不改算法
+        /// （改算法会同时改变前端预览换行，需一并验证）。</para></summary>
         public static string WrapText(string text, float boxWpx, float fs, float letterSpacing, string fontName, bool bold, bool italic)
         {
             if (DiagEnabled) try { System.IO.File.AppendAllText(System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "wm_debug.log"), DateTime.Now.ToString("HH:mm:ss.fff") + " [C#-WRAP] textLen=" + (text==null?0:text.Length) + " boxWpx=" + boxWpx.ToString("F1") + " fs=" + fs.ToString("F1") + " ls=" + letterSpacing + " font=" + fontName + Environment.NewLine, System.Text.Encoding.UTF8); } catch { }
@@ -369,8 +407,8 @@ namespace PDFQFZ.Library
             return v < lo ? lo : (v > hi ? hi : v);
         }
 
-        /// <summary>按原格式保存（JPEG 最高质量 100），输出到 outputFolder 下命名文件。</summary>
-        private static void SaveWithFormat(Bitmap bmp, string sourceFile, string outFile)
+        /// <summary>按原格式编码为字节流（JPEG 最高质量 100）。</summary>
+        private static byte[] EncodeImage(Bitmap bmp, string sourceFile)
         {
             string ext = Path.GetExtension(sourceFile).ToLowerInvariant();
             ImageFormat fmt;
@@ -393,12 +431,11 @@ namespace PDFQFZ.Library
                     using (var eps = new EncoderParameters(1))
                     {
                         eps.Param[0] = new EncoderParameter(Encoder.Quality, 100L);
-                        bmp.Save(outFile, codec, eps);
-                        return;
+                        using (var ms = new MemoryStream()) { bmp.Save(ms, codec, eps); return ms.ToArray(); }
                     }
                 }
             }
-            bmp.Save(outFile, fmt);
+            using (var ms = new MemoryStream()) { bmp.Save(ms, fmt); return ms.ToArray(); }
         }
 
         private static ImageCodecInfo FindCodec(string mime)

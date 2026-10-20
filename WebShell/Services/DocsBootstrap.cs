@@ -49,55 +49,73 @@ namespace PDFQFZ.WebShell.Services
         /// <summary>启动时调用：确保软件目录存在出厂说明文档与任务模板（每次覆盖写回）。</summary>
         public static void EnsureDocsGenerated()
         {
+            // 缺陷修复：此前整个 foreach 只有一个 try/catch——某个文件被占用（IOException）时，
+            // 异常直接跳出循环，**后续所有出厂文档/技能包文件都不再释放**
+            // （表现为「技能包 scripts 缺失」「手册没更新」这类难查的问题）。
+            // 现在每个文件单独 try/catch：单个失败不影响其余文件。
             try
             {
                 string dir = AppDomain.CurrentDomain.BaseDirectory;
                 var asm = Assembly.GetExecutingAssembly();
                 foreach (var d in Docs)
                 {
-                    string outPath = Path.Combine(dir, d[0]);
-                    using (var s = asm.GetManifestResourceStream(d[1]))
+                    try
                     {
-                        if (s == null) continue; // 资源缺失不报错（防启动失败）
-                        // 每次覆盖：出厂配置不可改；文件被占用时捕获忽略（不影响启动）
-                        string sub = Path.GetDirectoryName(outPath);
-                        if (!string.IsNullOrEmpty(sub)) Directory.CreateDirectory(sub);
-                        using (var fs = new FileStream(outPath, FileMode.Create, FileAccess.Write, FileShare.Read))
+                        string outPath = Path.Combine(dir, d[0]);
+                        using (var s = asm.GetManifestResourceStream(d[1]))
                         {
-                            s.CopyTo(fs);
+                            if (s == null) continue; // 资源缺失不报错（防启动失败）
+                            // 每次覆盖：出厂配置不可改；文件被占用时捕获忽略（不影响启动）
+                            string sub = Path.GetDirectoryName(outPath);
+                            if (!string.IsNullOrEmpty(sub)) Directory.CreateDirectory(sub);
+                            using (var fs = new FileStream(outPath, FileMode.Create, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete))
+                            {
+                                s.CopyTo(fs);
+                            }
                         }
+                    }
+                    catch (Exception ex)
+                    {
+                        CSharpBridge.WriteLog("[DOCS] 释放失败（已跳过）：" + d[0] + " —— " + ex.Message);
                     }
                 }
                 // V1.0.0.27：释放智能体调用技能包（file-stamp-watermark）——与手册同级的第二个入口
                 foreach (var d in SkillPackage)
                 {
-                    string outPath = Path.Combine(dir, d[0]);
-                    using (var s = asm.GetManifestResourceStream(d[1]))
+                    try
                     {
-                        if (s == null) continue;
-                        string sub = Path.GetDirectoryName(outPath);
-                        if (!string.IsNullOrEmpty(sub)) Directory.CreateDirectory(sub);
-                        // V1.0.0.31：技能包版本号运行时注入——SKILL.md 占位符 {{VERSION}} 替换为当前程序集版本
-                        // （与 EXE --version 输出一致），版本唯一来源 = 程序集版本，发版不可能漏改技能包版本号
-                        if (d[1].EndsWith("SKILL.md", StringComparison.OrdinalIgnoreCase))
+                        string outPath = Path.Combine(dir, d[0]);
+                        using (var s = asm.GetManifestResourceStream(d[1]))
                         {
-                            string content;
-                            using (var reader = new StreamReader(s, System.Text.Encoding.UTF8))
+                            if (s == null) continue;
+                            string sub = Path.GetDirectoryName(outPath);
+                            if (!string.IsNullOrEmpty(sub)) Directory.CreateDirectory(sub);
+                            // V1.0.0.31：技能包版本号运行时注入——SKILL.md 占位符 {{VERSION}} 替换为当前程序集版本
+                            // （与 EXE --version 输出一致），版本唯一来源 = 程序集版本，发版不可能漏改技能包版本号
+                            if (d[1].EndsWith("SKILL.md", StringComparison.OrdinalIgnoreCase))
                             {
-                                content = reader.ReadToEnd();
+                                string content;
+                                using (var reader = new StreamReader(s, System.Text.Encoding.UTF8))
+                                {
+                                    content = reader.ReadToEnd();
+                                }
+                                var ver = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
+                                string verText = ver == null ? "1.0.0.0" : ver.ToString(4);
+                                content = content.Replace("{{VERSION}}", verText);
+                                File.WriteAllText(outPath, content, new System.Text.UTF8Encoding(false));
                             }
-                            var ver = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
-                            string verText = ver == null ? "1.0.0.0" : ver.ToString(4);
-                            content = content.Replace("{{VERSION}}", verText);
-                            File.WriteAllText(outPath, content, new System.Text.UTF8Encoding(false));
-                        }
-                        else
-                        {
-                            using (var fs = new FileStream(outPath, FileMode.Create, FileAccess.Write, FileShare.Read))
+                            else
                             {
-                                s.CopyTo(fs);
+                                using (var fs = new FileStream(outPath, FileMode.Create, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete))
+                                {
+                                    s.CopyTo(fs);
+                                }
                             }
                         }
+                    }
+                    catch (Exception ex)
+                    {
+                        CSharpBridge.WriteLog("[DOCS] 释放失败（已跳过）：" + d[0] + " —— " + ex.Message);
                     }
                 }
             }

@@ -51,7 +51,10 @@ namespace PDFQFZ.Library
                     byte g = buffer[i + 1];
                     byte r = buffer[i + 2];
 
-                    if (r > threshold && g > threshold && b > threshold)
+                    // 缺陷修复：原来用严格大于 '>'——容差为 0 时 threshold=255，
+                    // 「r > 255」永不成立 → 纯白 (255,255,255) 反而抠不掉（容差 0 的语义应是「只抠纯白」）。
+                    // 改为 '>='：threshold=255 时纯白可命中，容差越大命中范围越宽，语义一致。
+                    if (r >= threshold && g >= threshold && b >= threshold)
                     {
                         buffer[i + 3] = 0;
                     }

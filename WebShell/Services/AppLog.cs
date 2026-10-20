@@ -90,21 +90,39 @@ namespace PDFQFZ.WebShell.Services
             prevContent = prevContent.TrimEnd('\r', '\n');
         }
 
-        /// <summary>追加一行日志（线程安全；FileShare.ReadWrite 防前端/壳层并发写丢行）。</summary>
+        /// <summary>追加一行日志（线程安全；FileShare.ReadWrite 防前端/壳层并发写丢行）。
+        /// <para>安全加固：前端可通过桥方法 LogLine 写入任意文本——原实现既不换行也不截断，
+        /// 可用 \r\n 伪造「===== 上次运行 xxx =====」分段污染日志、注入控制字符干扰阅读，
+        /// 单行也可无限长（前端高频调用即可把日志撑大）。现统一：控制字符（含 CR/LF）转空格、单行限长 2000 字符。</para></summary>
         public static void Write(string msg)
         {
             lock (_lock)
             {
                 try
                 {
+                    string s = SanitizeForLog(msg);
+                    if (s.Length > 2000) s = s.Substring(0, 2000) + "…[已截断]";
                     using (var fs = new FileStream(LogPath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite))
                     using (var sw = new StreamWriter(fs, new UTF8Encoding(false)))
                     {
-                        sw.Write(DateTime.Now.ToString("HH:mm:ss.fff") + " " + msg + Environment.NewLine);
+                        sw.Write(DateTime.Now.ToString("HH:mm:ss.fff") + " " + s + Environment.NewLine);
                     }
                 }
                 catch { }
             }
+        }
+
+        /// <summary>日志文本清洗：控制字符（CR/LF/TAB 等）统一转空格，保证一行一条记录、不可伪造分段。</summary>
+        private static string SanitizeForLog(string msg)
+        {
+            string s = msg ?? "";
+            if (s.Length == 0) return "";
+            StringBuilder sb = new StringBuilder(s.Length);
+            foreach (char c in s)
+            {
+                sb.Append(char.IsControl(c) ? ' ' : c);
+            }
+            return sb.ToString();
         }
     }
 }

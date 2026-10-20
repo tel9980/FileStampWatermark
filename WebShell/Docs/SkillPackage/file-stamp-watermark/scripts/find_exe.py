@@ -43,11 +43,17 @@ def find_exe(root):
     best_key = (-1, -1, -1, -1)
     for exe in candidates:
         try:
+            # 缺陷修复：EXE 的 --version 输出是 UTF-8 字节（App.xaml.cs 显式按 UTF-8 写出），
+            # 而 text=True 会按系统本地代码页解码——中文 Windows 是 cp936(GBK)，
+            # 11 个汉字的 UTF-8 字节按 GBK 解码会抛 UnicodeDecodeError（被下面 except 吞掉），
+            # 即便不抛也匹配不到「文件批量盖章与水印工具」→ 中文 Windows 上永远 NOT_FOUND，
+            # 整个技能包（方式 B）不可用。现固定按 UTF-8 解码并对异常字节做替换。
             out = subprocess.run(
-                [exe, '--version'], capture_output=True, text=True,
+                [exe, '--version'], capture_output=True,
                 timeout=15, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0,
             )
-            text = (out.stdout or '') + (out.stderr or '')
+            text = (out.stdout or b'').decode('utf-8', errors='replace') + \
+                   (out.stderr or b'').decode('utf-8', errors='replace')
         except Exception:
             continue
         if '文件批量盖章与水印工具' in text:

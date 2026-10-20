@@ -136,10 +136,12 @@ namespace PDFQFZ.Library
 
             int max = Math.Max(1, maxSplit);
             int ss = (qfzPages + max - 1) / max;     // 段数向上取整
-            int sy = qfzPages - ss * max / 2;
-            int sys = sy / ss;
-            int syy = sy % ss;
-            int pp = max / 2 + sys;
+            // 段内页数均分（与生成端 StampEngine.PDFWatermark 完全同公式）：
+            // pp = qfzPages/ss，前 syy 段各多 1 页（总和恒 = qfzPages）。
+            // 缺陷修复：旧公式 ss*max/2 在 max（分割数）为奇数时整除截断，
+            // 覆盖页数恒少 floor(ss/2) 页——尾部若干页拿不到骑缝章切片。
+            int pp = qfzPages / ss;
+            int syy = qfzPages % ss;
 
             // 章显示宽 pt = SizeMm * xzbl * 72 / 25.4（sfbl 推导）；每章像素 → pt：k = 章显示宽 / 章像素宽
             float k = (stampSizeMm * Math.Max(0.1f, stampRotationScale) * 72f / 25.4f) / stampW;
@@ -172,8 +174,8 @@ namespace PDFQFZ.Library
                     float sW1 = rot1f ? H * k : W * k;
                     float sH1 = rot1f ? W * k : H * k;
                     float xP1, yP1;
-                    if (eff1 == 3) { xP1 = dW1 - sW1; yP1 = (dH1 - sH1) * (100 - wzPercent) / 100f; }
-                    else if (eff1 == 2) { xP1 = 0f; yP1 = (dH1 - sH1) * (100 - wzPercent) / 100f; }
+                    if (eff1 == 3) { xP1 = dW1 - sW1; yP1 = (dH1 - sH1) * wzPercent / 100f; }
+                    else if (eff1 == 2) { xP1 = 0f; yP1 = (dH1 - sH1) * wzPercent / 100f; }
                     else if (eff1 == 1) { xP1 = (dW1 - sW1) * wzPercent / 100f; yP1 = 0f; }
                     else { xP1 = (dW1 - sW1) * wzPercent / 100f; yP1 = dH1 - sH1; }
                     result.Add(new SeamSlice { Page = page1, X = Clamp01(xP1 / dW1), Y = Clamp01(yP1 / dH1), W = Clamp01(sW1 / dW1), H = Clamp01(sH1 / dH1), SrcX = 0f, SrcY = 0f, SrcW = 1f, SrcH = 1f, Rotated = rot1f });
@@ -227,15 +229,15 @@ namespace PDFQFZ.Library
                     float sliceH = rotated ? sw * k : H * k;
 
                     float xPos, yPos;
-                    if (effWz == 3)      // 右：贴右缘，纵向位置由 wzPercent
+                    if (effWz == 3)      // 右：贴右缘，纵向位置由 wzPercent（自上而下，与上/下位置同一套 0%=起点 口径）
                     {
                         xPos = dispW - sliceW;
-                        yPos = (dispH - sliceH) * (100 - wzPercent) / 100f;
+                        yPos = (dispH - sliceH) * wzPercent / 100f;
                     }
-                    else if (effWz == 2) // 左：贴左缘，纵向位置由 wzPercent
+                    else if (effWz == 2) // 左：贴左缘，纵向位置由 wzPercent（自上而下）
                     {
                         xPos = 0f;
-                        yPos = (dispH - sliceH) * (100 - wzPercent) / 100f;
+                        yPos = (dispH - sliceH) * wzPercent / 100f;
                     }
                     else if (effWz == 1) // 上：贴顶，横向位置由 wzPercent
                     {

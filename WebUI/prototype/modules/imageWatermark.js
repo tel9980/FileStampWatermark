@@ -490,8 +490,9 @@ window.PdfqModules.imageWatermarkActions = {
                 this.opHint = '未指定输出目录，将输出到图片所在目录';
             }
             this.imgBusy = true;
-            /* V1.0.0.17：输出前全量同步水印参数到后端（透明度等基础参数；ReplaceAll 失败也继续，不阻塞输出） */
-            window.Bridge.invoke('ReplaceAllWatermarks', 0, JSON.stringify((self.wmBoxes || []).map(function (b) { return self.wmBoxToJson(b); }))).then(function(){}, function(){});
+            /* V1.0.0.17：输出前全量同步水印参数到后端（透明度等基础参数）——
+               同步调用已移到下方「严格串行」流程里（ReplaceAllWatermarks → GetImageDims → ApplyImageWatermarks），
+               此处不再 fire-and-forget，避免两次调用互相踩（晚到的那次会清空后端水印框）。 */
             /* V1.0.0.18：输出前逐图测换行快照（用户 v1.0.0.6 方案彻底实施——每图按自己实际像素尺寸 + 输出端字号 FsToS×短边 测行，
                输出 = 该图预览；不再跨图共享同一份快照）。GetImageDims 返回每图 {path,w,h}。 */
             const _doApply = function (perFileJson) {
@@ -515,36 +516,52 @@ window.PdfqModules.imageWatermarkActions = {
                     } else { self.imgBusy = false; self.opHint = r.error || '输出失败'; self.addLog(r.error || '输出失败', true); }
                 }, function (e) { self.imgBusy = false; self.opHint = '输出失败：' + e.message; self.addLog('输出失败：' + e.message, true); });
             };
-            window.Bridge.invoke('GetImageDims').then(function (json) {
-                let dims = []; try { dims = JSON.parse(json); } catch (e) {}
-                const perFile = {};
-                if (dims && dims.length && (self.wmBoxes || []).length) {
-                    (self.wmBoxes || []).forEach(function (b) {
-                        var fsToS = (b.fsToS > 0.0001 ? b.fsToS : 0);
-                        dims.forEach(function (d) {
-                            var _w = d.w || 0, _h = d.h || 0;
-                            var short = Math.min(_w, _h);
-                            var bc = Object.assign({}, b);
-                            if (fsToS > 0 && short > 0 && _w > 0) {
-                                try { self.wmCaptureWrapLines(bc, true, { dispW: _w, ptW: _w, ptH: _h }, fsToS * short); } catch (e) {}
-                            }
-                            if (!perFile[d.path]) perFile[d.path] = [];
-                            perFile[d.path].push(self.wmBoxToJson(bc));
+            /* 缺陷修复（并发竞态）：ReplaceAllWatermarks 会先清空后端该文档的全部水印框再重建，
+               而 ApplyImageWatermarks 在 perFileJson 为空时回退读后端全局框——
+               此前两者「发出去就不管」，无先后保证：
+               · ReplaceAllWatermarks 晚于 ApplyImageWatermarks 执行 → 输出用的是旧框（用户刚改的透明度/文字没生效）；
+               · ReplaceAllWatermarks 晚到 → 用户刚加的框被清掉重建，界面与后端状态不同步。
+               现在严格串行：先同步参数 → 再测每图尺寸 → 最后输出。 */
+            const _sync = window.Bridge.invoke('ReplaceAllWatermarks', 0, JSON.stringify((self.wmBoxes || []).map(function (b) { return self.wmBoxToJson(b); })));
+            const _afterSync = function () {
+                window.Bridge.invoke('GetImageDims').then(function (json) {
+                    let dims = []; try { dims = JSON.parse(json); } catch (e) {}
+                    const perFile = {};
+                    if (dims && dims.length && (self.wmBoxes || []).length) {
+                        (self.wmBoxes || []).forEach(function (b) {
+                            var fsToS = (b.fsToS > 0.0001 ? b.fsToS : 0);
+                            dims.forEach(function (d) {
+                                var _w = d.w || 0, _h = d.h || 0;
+                                var short = Math.min(_w, _h);
+                                var bc = Object.assign({}, b);
+                                if (fsToS > 0 && short > 0 && _w > 0) {
+                                    try { self.wmCaptureWrapLines(bc, true, { dispW: _w, ptW: _w, ptH: _h }, fsToS * short); } catch (e) {}
+                                }
+                                if (!perFile[d.path]) perFile[d.path] = [];
+                                perFile[d.path].push(self.wmBoxToJson(bc));
+                            });
                         });
-                    });
-                }
-                _doApply(Object.keys(perFile).length ? JSON.stringify(perFile) : '');
-            }, function () { _doApply(''); });
+                    }
+                    _doApply(Object.keys(perFile).length ? JSON.stringify(perFile) : '');
+                }, function () { _doApply(''); });
+            };
+            if (_sync && typeof _sync.then === 'function') {
+                _sync.then(_afterSync, _afterSync);   // 同步失败也要继续输出（不阻塞），但保证顺序
+            } else {
+                _afterSync();
+            }
         },
 
-        /* 输出目录选择（C# FolderBrowserDialog，复用 PickOutputDir） */
+        /* 输出目录选择（C# FolderBrowserDialog，复用 PickOutputDir）
+           协议：C# PickOutputDir 返回「裸路径字符串」/ 'cancel' / 'err:...'（不是 JSON）——
+           此前此处按 JSON 解析，JSON.parse 抛错被吞 → r={} → r.ok 永假 → 输出目录永远选不中，
+           且用户只看到「选择失败」，产物实际落在源目录。改按裸字符串处理，与 batchActions.js pickOutDir 同口径。 */
         imgPickOutDir() {
             if (!window.Bridge) return;
             const self = this;
-            window.Bridge.invoke('PickOutputDir').then(function (json) {
-                let r = {}; try { r = JSON.parse(json); } catch (e) {}
-                if (r.ok) self.imgOutDir = r.path;
-                else if (!r.cancel) self.opHint = r.error || '选择失败';
+            window.Bridge.invoke('PickOutputDir').then(function (p) {
+                if (p && String(p).indexOf('err:') === 0) { self.opHint = '选择失败：' + p; }
+                else if (p && p !== 'cancel' && String(p).trim()) { self.imgOutDir = String(p).trim(); }
             }, function () {});
         },
 

@@ -96,8 +96,11 @@ def main():
 
     cmd = [exe, '--batch', task_path, '--log', log_path]
     try:
+        # 缺陷修复：text=True 会按本地代码页解码 stdout（中文 Windows=cp936），
+        # EXE 输出含中文时可能抛 UnicodeDecodeError 让脚本直接崩掉。
+        # 现取字节后按 UTF-8 容错解码。
         proc = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=1800,
+            cmd, capture_output=True, timeout=1800,
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0,
         )
     except subprocess.TimeoutExpired:
@@ -110,7 +113,7 @@ def main():
     print('RESULT: %s' % proc.returncode)
     # 参数/路径错误（退出码1）：输出 exe 标准输出的错误信息；日志可能是旧内容，不读取反馈段
     if proc.returncode != 0:
-        out = (proc.stdout or '').strip()
+        out = (proc.stdout or b'').decode('utf-8', errors='replace').strip()
         if out:
             print(out)
         return
