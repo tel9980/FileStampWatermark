@@ -35,6 +35,9 @@ namespace PDFQFZ.WebShell
             PDFQFZ.WPF.Services.AppConfig.MigrateStampDefaultsToV13();
             // V1.0.0.14：统一运行日志 app_log.log——启动轮转（保留上次+本次两段），须在崩溃处理器注册前初始化
             AppLog.Init();
+            // 2026-10-21：赞助版功能下线的一次性清理（删除运行组件下的旧 vip.ini / activation.dat），
+            // 放在 AppLog.Init() 之后，清理动作才能落进本次运行日志
+            try { PDFQFZ.WPF.Services.AppConfig.CleanupRemovedFeatures(); } catch { }
             // V374：出厂说明文档（智能体调用手册/用户使用说明）嵌入 EXE，每次启动覆盖写出到软件目录（GUI 与批处理均执行）
             DocsBootstrap.EnsureDocsGenerated();
             // pdfium 引擎：启动即提取到 EXE 同目录并注册加载路径（与 WPF 版一致，必须先于首次渲染）

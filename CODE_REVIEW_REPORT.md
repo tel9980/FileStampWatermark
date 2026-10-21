@@ -13,7 +13,7 @@
 |------|------|
 | 三线并行静态审计 | ① WebView2 桥接层 + 前端安全　② 盖章/水印核心引擎 + PDFQFZ 库　③ 批量/CLI/配置持久化 + 前端业务逻辑 |
 | **本地真编译验证** | 环境无 .NET SDK 且 WPF/.NET Framework 4.7.2 只能在 Windows 编译，故自建 `net472` 校验工程（`Microsoft.NETFramework.ReferenceAssemblies` + WebView2/iTextSharp/PdfiumViewer 依赖 + XAML 生成代码桩），**本轮所有 C# 改动均已通过真实编译（0 error）** |
-| **仓库 CI 验证** | PR #1 的 CI 全绿：JS 语法 / HTML 内联脚本 / 白名单守卫 / **桥方法两端对齐（新双向门禁）** / **技能包 Python 语法（新门禁）** / **Windows 双档编译（Release + ReleaseVIP，含真实 csproj + XAML 编译 + Costura）** |
+| **仓库 CI 验证** | PR #1 的 CI 全绿：JS 语法 / HTML 内联脚本 / 白名单守卫 / **桥方法两端对齐（新双向门禁）** / **技能包 Python 语法（新门禁）** / **Windows 编译门禁（真实 csproj + XAML 编译 + Costura）** |
 | 门禁脚本自测 | 加固后的 `check_bridge_align.sh` 本地跑通，并用「删掉 C# 侧方法」反向验证它确实能抓出原有缺陷 |
 | 未覆盖 | 运行时行为（需 Windows + WebView2 实机）：UI 交互、真实 PDF 渲染效果、EXE 打包 |
 
@@ -64,7 +64,7 @@
 |---|------|------|-----------|
 | R-1 | 中 | 页面无 Content-Security-Policy | 加了 CSP 但本机无法实机验证 WebView2 行为，一旦写错就是**白屏**；已改为先加「导航白名单」阻断真正的攻击路径（外部页拿不到桥），CSP 给出可粘贴的方案待实机验证 |
 | R-2 | 中 | `MainWindow` 里约 2000 行 E2E/自检代码由环境变量触发（含任意路径读写） | 拆成独立测试工程属于结构性调整，会打断现有 E2E 流程；本轮先在报告登记 |
-| R-3 | 中 | `activation.dat` 硬件指纹仅 XOR+Base64 混淆，异常一律放行 | 属授权策略设计问题，需要产品侧确认「失败是否放行」的取舍 |
+| R-3 | ~~中~~ | ~~`activation.dat` 硬件指纹仅 XOR+Base64 混淆，异常一律放行~~ | **已作废**：赞助版档位已于 v1.1.1.12 整体下线，授权/指纹机制连同 `vip.ini` 一起删除，问题不复存在 |
 | R-4 | 中 | `PdfTextSearcher` 整文件读入内存并 ×2 实例（大文件峰值 4× 文件大小） | 改用 `FPDF_LoadDocument` 需重写 P/Invoke 加载路径，回归面大；建议下一轮单独做 |
 | R-5 | 低 | 9 个 `PDFQFZ/Library/*.cs` 未加入 csproj（死代码，含「防御性实现」但一行不生效） | 本轮不动编译单元集合，避免连带编译错误；建议要么接入要么删除，避免文档误导 |
 | R-6 | 低 | `config.ini` 逐键写入（一次保存重写文件数十次） | 需要把 `IniFileHelper` 改成批量块写；本轮只对最危险的一处（方案保存）做了原子化 |
@@ -196,4 +196,26 @@ dotnet build -v:m        # → Build succeeded 即通过
 ```
 
 > 该工程只做**编译期**校验（WPF 运行时、PDF 渲染、EXE 打包仍需 Windows 实机 + 仓库自带 CI 的
-> `windows-latest` 双档编译门禁）。
+> `windows-latest` 编译门禁）。
+
+---
+
+## 附录：2026-10-21 追加处理（赞助版整体下线）
+
+审查报告出稿后，产品侧决定**不再保留赞助版（VIP）档位**，相关代码已全部删除（v1.1.1.12 / v1.1.1.13）：
+
+| 位置 | 删除内容 |
+|---|---|
+| `AppConfig` | 档位字段（`VipTier`/`TierActive`/`EnableTheme`/`BadgeDebug`/`EnableCustomTitle`/`ThemeColor`/`TitleSuffix`）、`InitTierConfig`、`CheckActivation`、`GetMachineFingerprint`、`EncAct`/`DecAct`、`SaveTierKey`、`activation.dat` 授权记录、`themeColor`/`titleSuffix` 配置键 |
+| `CSharpBridge` | `SetVipConfig` 桥方法；`GetUiConfig` 的 `badgeDebug`/`enableTheme`/`enableCustomTitle`/`tierActive`/`themeColor` |
+| `MainWindow` | 窗口标题的 `TitleSuffix` 后缀（标题固定「文件批量盖章与水印工具 vX.Y.Z」） |
+| csproj | `ReleaseVIP` 档（`TRACE;VIP_PAID`）、`System.Management` 引用、badge/theme/localforage 嵌入资源 |
+| 前端 | 删除 `modules/badge.js`、`modules/theme.js`、`vendor/localforage.min.js` 及 index.html/configPersist/batchActions/imageWatermark 里的全部接线 |
+| README | 不再承诺「赞助版」，改为「软件只有一个版本，所有用户功能完全一致」 |
+
+**对既有用户的影响：零。** 免费版下 `enableTheme=false`、`badgeEnabled=false`，被删的标题栏元素都是 `v-if`
+条件渲染，**从未在免费版显示过**——删除前后标题栏 DOM 与视觉完全一致；主题色仍为默认蓝
+（`--primary` 等 CSS 变量本就在样式表里静态定义，删掉的只是运行时覆盖与切换入口）。
+旧版遗留的 `运行组件\vip.ini` 与 `运行组件\activation.dat` 由 v1.1.1.13 启动时一次性清理（并写运行日志）。
+
+**发布流水线同步收敛**：`release.yml` 只编免费版、只挂一个附件；`ci.yml` 编译门禁由双档改为单档。

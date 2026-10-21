@@ -102,7 +102,7 @@
 |---|------|------|----------------|
 | U-1 | 中 | 页面无 Content-Security-Policy | 本机无法实机验证 WebView2 的 CSP 行为，**写错即白屏**。建议实测后加：<br>`<meta http-equiv="Content-Security-Policy" content="default-src 'self' https://cache data: blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://cache; connect-src 'self' data: blob:; frame-src 'none'; object-src 'none'; base-uri 'none'">`<br>（`'unsafe-eval'` 是必需的：项目用 vue.global.prod.js 全量构建，模板编译器需要 `new Function`） |
 | U-2 | 中 | `MainWindow.xaml.cs` 约 2000 行 E2E/自检代码由环境变量 `PDFQFZ_SHELL_DUMP` 触发，含任意路径读写与 `Environment.Exit` | 建议迁到 `#if DEBUG` 或独立测试工程；迁移前注意 E2E 流程依赖发布版 EXE |
-| U-3 | 中 | `activation.dat` 硬件指纹仅 `XOR 0x5A + Base64`；`catch { return true; }` 异常一律放行；记录数 <2 自动把本机加进去 | 授权策略需产品侧拍板；技术上建议改 HMAC-SHA256(机器密钥, 指纹) + 失败不放行 |
+| U-3 | ~~中~~ | ~~`activation.dat` 硬件指纹仅 `XOR 0x5A + Base64`；`catch { return true; }` 异常一律放行；记录数 <2 自动把本机加进去~~ | **已作废**：赞助版档位已于 v1.1.1.12 整体下线，授权/指纹机制连同 `vip.ini` 一并删除，风险面不复存在（U-1~U-5 之外的「设备标识信息明文可还原」也随之消失） |
 | U-4 | 低 | `GetAppPath` / `GetIniPath` / `GetStampList` 会把 EXE 目录、config.ini 绝对路径、印章库路径暴露给页面 | 属信息泄露（辅助后续攻击），建议改为只返回文件名/相对路径；当前无直接可利用链 |
 | U-5 | 低 | `OpenFolder` 用 `explorer.exe` + 拼接参数（前端可控） | 已有 `Directory.Exists`/`File.Exists` 前置校验，且 Windows 文件名不允许含 `"`，**当前不可参数注入**；建议改为 `ProcessStartInfo{FileName=路径, UseShellExecute=true}` 直接打开 |
 

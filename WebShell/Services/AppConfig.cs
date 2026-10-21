@@ -143,6 +143,30 @@ namespace PDFQFZ.WPF.Services
             catch { }
         }
 
+        /// <summary>2026-10-21：赞助版功能下线后的一次性清理——删除「运行组件」下旧版遗留的
+        /// vip.ini（主题色 / 标题后缀配置）与 activation.dat（硬件指纹授权记录）。
+        /// 这两个文件对应的功能已整体移除、代码不再读取，留着只会让用户以为软件还有收费档位；
+        /// 删除后写一条运行日志便于追溯（内容无敏感信息，仅文件名）。</summary>
+        public static void CleanupRemovedFeatures()
+        {
+            try
+            {
+                string[] legacyFiles = { Path.Combine(RuntimeDir, "vip.ini"), Path.Combine(RuntimeDir, "activation.dat") };
+                foreach (string f in legacyFiles)
+                {
+                    try
+                    {
+                        if (!File.Exists(f)) continue;
+                        File.Delete(f);
+                        try { PDFQFZ.WebShell.Services.AppLog.Write("[CLEANUP] 已删除下线功能的遗留文件：" + Path.GetFileName(f)); } catch { }
+                    }
+                    catch { }
+                }
+            }
+            catch { }
+        }
+
+
         /// <summary>V1.3.0 印章默认参数一次性迁移标记（config.ini [StampDefaults] 节，写 "1" 表示已迁移过）。
         /// 与 [Stamp] 节分离，避免与既有键冲突。</summary>
         private const string StampDefaultsSection = "StampDefaults";

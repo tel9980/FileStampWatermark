@@ -436,7 +436,7 @@ A：统一放在「运行组件\智能体调用\智能体调用工作过程文�
 | --- | --- |
 | [CODE_REVIEW_REPORT.md](CODE_REVIEW_REPORT.md) | 2026-10-20 全量代码审查报告：32 个确认缺陷（8 严重 / 11 高 / 13 中低）、逐条根因与修复说明、实机回归清单、本地 net472 编译验证环境的复现方法 |
 | [SECURITY_AUDIT_REPORT.md](SECURITY_AUDIT_REPORT.md) | 安全审计报告：WebView2 桥接层的攻击面与威胁模型、8 项已加固内容、5 项未修项与理由、加固后的安全基线 |
-| `.github/workflows/ci.yml` | CI 门禁：JS 语法 / HTML 内联脚本 / 白名单守卫 / 桥方法两端对齐（双向）/ 技能包 Python 语法 / Windows 双档编译 |
+| `.github/workflows/ci.yml` | CI 门禁：JS 语法 / HTML 内联脚本 / 白名单守卫 / 桥方法两端对齐（双向）/ 技能包 Python 语法 / Windows 编译门禁 |
 | `.github/scripts/check_bridge_align.sh` | 桥方法两端对齐检查（**双向**：C#→前端 与 前端→C#，后者可拦住「前端调了 C# 没有的方法」这类静默失效） |
 
 > 本地只想快速验证「代码能不能编过」时，可按《代码审查报告》第六节搭一个 net472 校验工程（Linux 上即可，无需 Windows）。
